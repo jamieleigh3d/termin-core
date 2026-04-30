@@ -21,6 +21,7 @@ framework, on top of ASGI semantics but without an ASGI library
 dependency.
 """
 
+from .auth import AuthContext  # noqa: F401
 from .request import TerminRequest, TerminResponse  # noqa: F401
 from .websocket import TerminWebSocket  # noqa: F401
 from .route_specs import (  # noqa: F401
@@ -31,6 +32,7 @@ from .route_specs import (  # noqa: F401
 )
 
 __all__ = [
+    "AuthContext",
     "TerminRequest",
     "TerminResponse",
     "TerminWebSocket",

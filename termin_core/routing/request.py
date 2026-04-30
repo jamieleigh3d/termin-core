@@ -27,6 +27,7 @@ from urllib.parse import parse_qs
 
 if TYPE_CHECKING:
     from ..providers.identity_contract import Principal
+    from .auth import AuthContext
 
 
 class _CaseInsensitiveDict(dict):
@@ -127,6 +128,13 @@ class TerminRequest:
             handler runs (per Q3=a of the routing briefing). May be
             None when no identity provider is bound; handlers should
             tolerate that as the anonymous case.
+        auth: Resolved authentication context — principal plus
+            request-scoped scopes plus role name. Adapter
+            middleware computes once and assigns. Handlers consume
+            ``request.auth.has_scope(...)`` for authorization
+            questions. May be None when no identity provider is
+            bound; handlers should treat that as the anonymous,
+            no-scopes case.
         scheme: ``http`` or ``https``.
         client: ``(host, port)`` tuple of the immediate client, when
             the adapter can determine it.
@@ -141,6 +149,7 @@ class TerminRequest:
     cookies: dict[str, str] = field(default_factory=dict)
     body: bytes = b""
     principal: Optional["Principal"] = None
+    auth: Optional["AuthContext"] = None
     scheme: str = "http"
     client: Optional[tuple[str, int]] = None
 
