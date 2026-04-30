@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "termin-core"
+version = "0.9.0"
+description = "Termin core library — contract Protocols, IR types, and routing dispatch surface that any conforming Termin runtime imports from."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Jamie-Leigh Blake" },
+]
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+# Intentionally minimal — termin-core is the framework-free contract
+# surface. No FastAPI, no uvicorn, no aiosqlite, no Anthropic SDK.
+# Dependencies here must be load-bearing for ANY conforming runtime.
+dependencies = [
+    "cel-python>=0.5.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["termin_core*"]
+
+[tool.setuptools.package-data]
+termin_core = ["py.typed"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+testpaths = ["tests"]
