@@ -373,16 +373,13 @@ async def create_content_handler(
     schema = ctx.content_lookup.get(cr, {})
 
     # ── Defaults + validation (validation raises TerminValidationError) ──
-    # The handler reuses the legacy user-dict shape for default-eval
-    # because evaluate_field_defaults reads "User" off the dict;
-    # slice 7.5 ports it to AuthContext.
-    user_dict_for_defaults = {
-        "User": {
-            "id": auth.principal.id if auth else "",
-            "display_name": auth.principal.display_name if auth else "",
-            "scopes": list(auth.scopes) if auth else [],
-        }
-    }
+    # evaluate_field_defaults reads ``user["User"]`` for the
+    # PascalCase-keyed CEL shape (User.Username, User.Role, etc.)
+    # IR-declared default_expr expressions reference. The adapter
+    # middleware stamps the legacy user dict on request for this
+    # purpose during the slice-7.2.e migration; slice 7.5 ports
+    # the shape into AuthContext or rewrites the CEL surface.
+    user_dict_for_defaults = request.legacy_user_dict or {}
     evaluate_field_defaults(body, schema, ctx.expr_eval, user_dict_for_defaults)
     validate_enum_constraints(body, schema)
     validate_min_max_constraints(body, schema)
@@ -669,10 +666,73 @@ async def delete_content_handler(
     return TerminResponse(json_body={"deleted": True})
 
 
+async def transition_content_handler(
+    request: TerminRequest,
+    ctx: Any,
+) -> TerminResponse:
+    """Handle ``POST /api/v1/{content}/{key}/_transition/{machine}/{target}``
+    — declared state transition.
+
+    Adapter contract:
+        * ``request.path_params["content"]`` — content_ref
+        * ``request.path_params["key"]`` — lookup-column value
+        * ``request.path_params["machine"]`` — state machine name
+          (snake_case). Falls back to the first state machine on the
+          content if missing — back-compat for legacy IRs without
+          machine_name in the RouteSpec.
+        * ``request.path_params["target"]`` — target state, with
+          underscores converted to spaces (``in_progress`` →
+          ``"in progress"``).
+        * ``request.auth`` — caller's AuthContext.
+
+    Delegates to :func:`termin_core.state.machine.do_state_transition`,
+    which raises Termin*Error on declared-transition / scope /
+    not-found / concurrent-CAS-failure conditions.
+    """
+    from ..state import do_state_transition
+
+    cr = request.path_params.get("content", "")
+    key = request.path_params.get("key", "")
+    machine = request.path_params.get("machine") or None
+    target_state = request.path_params.get("target", "")
+    auth = request.auth
+
+    # ── Resolve target row by lookup column ──
+    lookup_col = getattr(ctx, "lookup_column_for", lambda _cr: "id")(cr)
+    if lookup_col == "id":
+        row = await ctx.storage.read(cr, key)
+    else:
+        page = await ctx.storage.query(
+            cr,
+            Eq(field=lookup_col, value=key),
+            QueryOptions(limit=1),
+        )
+        row = dict(page.records[0]) if page.records else None
+    if not row:
+        raise TerminNotFoundError("Not found")
+
+    # ── Resolve machine_name with back-compat fallback ──
+    if machine is None:
+        sms = ctx.sm_lookup.get(cr, [])
+        if sms:
+            machine = sms[0]["machine_name"]
+        else:
+            raise TerminBadRequestError(f"No state machine for {cr}")
+
+    user_dict = _user_dict_for_state_transition(auth)
+    record = await do_state_transition(
+        ctx.storage, cr, row["id"], machine, target_state,
+        user_dict, ctx.sm_lookup,
+        ctx.terminator, ctx.event_bus,
+    )
+    return TerminResponse(json_body=record)
+
+
 __all__ = [
     "list_content_handler",
     "get_content_handler",
     "create_content_handler",
     "update_content_handler",
     "delete_content_handler",
+    "transition_content_handler",
 ]

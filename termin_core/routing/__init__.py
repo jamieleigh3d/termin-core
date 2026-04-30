@@ -35,6 +35,7 @@ from .crud import (  # noqa: F401
     delete_content_handler,
     get_content_handler,
     list_content_handler,
+    transition_content_handler,
     update_content_handler,
 )
 
@@ -51,5 +52,6 @@ __all__ = [
     "delete_content_handler",
     "get_content_handler",
     "list_content_handler",
+    "transition_content_handler",
     "update_content_handler",
 ]
