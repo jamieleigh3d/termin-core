@@ -43,6 +43,12 @@ from .connection_manager import (  # noqa: F401
     filter_owned_rows,
 )
 from .channel_dispatch import dispatch_websocket_session  # noqa: F401
+from .compute import trigger_compute_handler  # noqa: F401
+from .channels import (  # noqa: F401
+    channel_send_handler,
+    invoke_channel_action_handler,
+    webhook_receive_handler,
+)
 
 __all__ = [
     "AuthContext",
@@ -62,4 +68,8 @@ __all__ = [
     "ConnectionManager",
     "filter_owned_rows",
     "dispatch_websocket_session",
+    "trigger_compute_handler",
+    "channel_send_handler",
+    "invoke_channel_action_handler",
+    "webhook_receive_handler",
 ]
