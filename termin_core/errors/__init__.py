@@ -14,5 +14,22 @@ Pure value types and routing logic. No framework dependency.
 """
 
 from .router import TerminError, TerminAtor  # noqa: F401
+from .exceptions import (  # noqa: F401
+    TerminRuntimeError,
+    TerminBadRequestError,
+    TerminScopeError,
+    TerminNotFoundError,
+    TerminConflictError,
+    TerminValidationError,
+)
 
-__all__ = ["TerminError", "TerminAtor"]
+__all__ = [
+    "TerminError",
+    "TerminAtor",
+    "TerminRuntimeError",
+    "TerminBadRequestError",
+    "TerminScopeError",
+    "TerminNotFoundError",
+    "TerminConflictError",
+    "TerminValidationError",
+]
