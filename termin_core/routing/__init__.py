@@ -38,6 +38,11 @@ from .crud import (  # noqa: F401
     transition_content_handler,
     update_content_handler,
 )
+from .connection_manager import (  # noqa: F401
+    ConnectionManager,
+    filter_owned_rows,
+)
+from .channel_dispatch import dispatch_websocket_session  # noqa: F401
 
 __all__ = [
     "AuthContext",
@@ -54,4 +59,7 @@ __all__ = [
     "list_content_handler",
     "transition_content_handler",
     "update_content_handler",
+    "ConnectionManager",
+    "filter_owned_rows",
+    "dispatch_websocket_session",
 ]
