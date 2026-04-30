@@ -30,7 +30,13 @@ from .route_specs import (  # noqa: F401
     RouteSpec,
     WebSocketRouteSpec,
 )
-from .crud import list_content_handler  # noqa: F401
+from .crud import (  # noqa: F401
+    create_content_handler,
+    delete_content_handler,
+    get_content_handler,
+    list_content_handler,
+    update_content_handler,
+)
 
 __all__ = [
     "AuthContext",
@@ -41,5 +47,9 @@ __all__ = [
     "WebSocketHandler",
     "RouteSpec",
     "WebSocketRouteSpec",
+    "create_content_handler",
+    "delete_content_handler",
+    "get_content_handler",
     "list_content_handler",
+    "update_content_handler",
 ]

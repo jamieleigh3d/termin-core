@@ -24,7 +24,17 @@ from typing import Any
 
 from ..errors import (
     TerminBadRequestError,
+    TerminConflictError,
+    TerminNotFoundError,
+    TerminRuntimeError,
     TerminScopeError,
+)
+from ..validation import (
+    evaluate_field_defaults,
+    strip_unknown_fields,
+    validate_dependent_values,
+    validate_enum_constraints,
+    validate_min_max_constraints,
 )
 from ..providers.storage_contract import (
     And,
@@ -225,4 +235,444 @@ async def _redact_audit_traces_via_ctx(ctx, records, content_ref, scopes):
     return await fn(records, content_ref, scopes)
 
 
-__all__ = ["list_content_handler"]
+async def get_content_handler(
+    request: TerminRequest,
+    ctx: Any,
+) -> TerminResponse:
+    """Handle ``GET /api/v1/{content}/{key}`` — read one record.
+
+    The route is registered with a lookup column (typically ``id``,
+    sometimes a unique field like ``sku``). The runtime stashes the
+    column on ctx via ``ctx.lookup_column_for(content_ref)``.
+    Primary-key reads use ``ctx.storage.read``; alternate-key reads
+    use ``ctx.storage.query`` with a single-row limit.
+
+    Adapter contract:
+        * ``request.path_params["content"]`` — content_ref
+        * ``request.path_params["key"]`` — the lookup-column value
+        * ``request.auth`` — caller's AuthContext
+
+    Raises:
+        TerminNotFoundError: record doesn't exist, or ownership
+            row_filter blocks the read (404 by design — the record
+            "doesn't exist" from the principal's perspective per
+            BRD §3.4; existence shouldn't leak through the auth
+            shape).
+    """
+    cr = request.path_params.get("content", "")
+    key = request.path_params.get("key", "")
+    auth = request.auth
+    user_scopes = set(auth.scopes) if auth else set()
+
+    lookup_col = getattr(ctx, "lookup_column_for", lambda _cr: "id")(cr)
+    if lookup_col == "id":
+        record = await ctx.storage.read(cr, key)
+    else:
+        page = await ctx.storage.query(
+            cr,
+            Eq(field=lookup_col, value=key),
+            QueryOptions(limit=1),
+        )
+        record = dict(page.records[0]) if page.records else None
+    if record is None:
+        raise TerminNotFoundError("Not found")
+
+    schema = ctx.content_lookup.get(cr, {})
+
+    # ── Ownership row_filter on GET_ONE ──
+    # Per BRD §3.4, the row "doesn't exist" from the principal's
+    # perspective when the ownership predicate fails — surface 404
+    # (not 403) so existence doesn't leak through the auth shape.
+    row_filter = getattr(ctx, "row_filter_for", lambda _cr: None)(cr)
+    if row_filter and row_filter.get("kind") == "ownership":
+        owner_field = row_filter.get("field")
+        owner_id = auth.principal.id if auth else ""
+        if owner_field and record.get(owner_field) != owner_id:
+            raise TerminNotFoundError("Not found")
+
+    # ── Redaction ──
+    from ..confidentiality import redact_record
+    record = redact_record(record, schema, user_scopes)
+
+    if cr.startswith("compute_audit_log_"):
+        redact_audit = getattr(ctx, "redact_audit_traces", None)
+        if redact_audit is not None:
+            records = await redact_audit([record], cr, user_scopes)
+            record = records[0] if records else record
+
+    return TerminResponse(json_body=record)
+
+
+async def create_content_handler(
+    request: TerminRequest,
+    ctx: Any,
+) -> TerminResponse:
+    """Handle ``POST /api/v1/{content}`` — create a record.
+
+    Adapter contract:
+        * ``request.path_params["content"]`` — content_ref
+        * ``request.headers["content-type"]`` — drives JSON vs form
+          parsing.
+        * ``request.body`` — raw bytes; the handler parses as JSON
+          when content-type contains ``application/json``, else as
+          URL-encoded form.
+        * ``request.auth`` — caller's AuthContext.
+
+    Per BRD §3.4 / §3.5 ownership: when the route's ``owner_field``
+    is set on ctx (``ctx.owner_field_for(content_ref)``), the
+    handler stamps that field with the principal's id at create
+    time. Overwrites any client-supplied value so apps cannot
+    create rows owned by other principals.
+
+    Per BRD multi-state-machine create gate: state-machine columns
+    are stripped before validation+insert so the SQL DEFAULT
+    applies the machine's initial state. A client-supplied value
+    for a state column would otherwise let a caller bootstrap a
+    record already past its initial state, bypassing transition
+    rules.
+
+    Raises:
+        TerminScopeError: caller violates the boundary's identity scope.
+        TerminBadRequestError: NOT NULL constraint violation,
+            malformed body.
+        TerminConflictError: UNIQUE constraint violation
+            (idempotency-key collision, etc.).
+        TerminValidationError: D-19 dependent_values / one_of /
+            min/max bound violation.
+        TerminRuntimeError: any other persistence error (mapped to
+            500 by the HTTP adapter).
+    """
+    cr = request.path_params.get("content", "")
+    auth = request.auth
+    user_scopes = list(auth.scopes) if auth else []
+
+    bnd_id_err = _check_boundary_identity(ctx, cr, user_scopes)
+    if bnd_id_err:
+        raise TerminScopeError(bnd_id_err)
+
+    # ── Body parsing — JSON or form ──
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = await request.json() or {}
+    else:
+        form = await request.form()
+        body = {k: v for k, v in form.items() if v}
+
+    # ── State-machine column gate ──
+    sm_info = getattr(ctx, "state_machine_info_for", lambda _cr: None)(cr)
+    seed_state = getattr(ctx, "seed_state_columns", None)
+    if seed_state is not None:
+        body = seed_state(body, sm_info, strip_existing=True)
+
+    # ── Ownership stamping ──
+    owner_field = getattr(ctx, "owner_field_for", lambda _cr: None)(cr)
+    if owner_field:
+        owner_id = auth.principal.id if auth else ""
+        body[owner_field] = owner_id
+
+    schema = ctx.content_lookup.get(cr, {})
+
+    # ── Defaults + validation (validation raises TerminValidationError) ──
+    # The handler reuses the legacy user-dict shape for default-eval
+    # because evaluate_field_defaults reads "User" off the dict;
+    # slice 7.5 ports it to AuthContext.
+    user_dict_for_defaults = {
+        "User": {
+            "id": auth.principal.id if auth else "",
+            "display_name": auth.principal.display_name if auth else "",
+            "scopes": list(auth.scopes) if auth else [],
+        }
+    }
+    evaluate_field_defaults(body, schema, ctx.expr_eval, user_dict_for_defaults)
+    validate_enum_constraints(body, schema)
+    validate_min_max_constraints(body, schema)
+    validate_dependent_values(cr, body, ctx.content_lookup, ctx.expr_eval)
+    body = strip_unknown_fields(body, schema)
+
+    # ── Persist ──
+    try:
+        record = await ctx.storage.create(cr, body)
+        if seed_state is not None:
+            record = seed_state(dict(record), sm_info)
+        publish = getattr(ctx, "publish_content_event", None)
+        if publish is not None:
+            await publish("created", cr, record)
+    except TerminRuntimeError:
+        # Re-raise framework-agnostic exceptions unchanged.
+        raise
+    except Exception as e:
+        # Route through TerminAtor for observability.
+        terminator_route = getattr(ctx, "route_terminator_validation", None)
+        if terminator_route is not None:
+            terminator_route(cr, e)
+        err_msg = str(e)
+        if "UNIQUE constraint" in err_msg:
+            raise TerminConflictError(err_msg)
+        if "NOT NULL constraint" in err_msg:
+            raise TerminBadRequestError(err_msg)
+        raise TerminRuntimeError(err_msg)
+
+    # ── Run IR-declared event handlers ──
+    run_event_handlers = getattr(ctx, "run_event_handlers_for_content", None)
+    if run_event_handlers is not None:
+        await run_event_handlers(cr, "created", record)
+
+    # ── Redact + return ──
+    from ..confidentiality import redact_record
+    record = redact_record(record, schema, set(user_scopes))
+    return TerminResponse(status_code=201, json_body=record)
+
+
+def _user_dict_for_state_transition(auth) -> dict:
+    """Project an :class:`AuthContext` into the user-dict shape
+    :func:`termin_core.state.machine.do_state_transition` expects.
+
+    Transitional helper — slice 7.5 ports do_state_transition to
+    take an AuthContext directly, at which point this projection
+    goes away.
+    """
+    if auth is None:
+        return {"scopes": [], "the_user": None}
+    return {
+        "scopes": list(auth.scopes),
+        "role": auth.role_name,
+        "the_user": {
+            "id": auth.principal.id,
+            "display_name": auth.principal.display_name,
+            "type": auth.principal.type,
+            "is_anonymous": auth.is_anonymous,
+            "is_system": auth.is_system,
+            "scopes": list(auth.scopes),
+        },
+    }
+
+
+async def update_content_handler(
+    request: TerminRequest,
+    ctx: Any,
+) -> TerminResponse:
+    """Handle ``PUT /api/v1/{content}/{key}`` — update one record.
+
+    Adapter contract:
+        * ``request.path_params["content"]`` — content_ref
+        * ``request.path_params["key"]`` — lookup-column value
+        * ``request.body`` — JSON body with the fields to update.
+        * ``request.auth`` — caller's AuthContext.
+
+    Per BRD §3.4 / §3.5 ownership: when the route's ``row_filter``
+    is ownership, a non-owner sees 404 (the row "doesn't exist"
+    from their perspective; existence shouldn't leak through the
+    auth shape). Attempts to overwrite the ownership field are
+    silently stripped from the body — preserves the original
+    owner.
+
+    Per BRD multi-state-machine PUT gate: any state-column value
+    in the body that differs from the current record routes
+    through :func:`do_state_transition` so the declared transition
+    table + required scope are honored. Multiple touched machines
+    transition in IR order; any failure stops the chain (and the
+    state-machine engine surfaces the failure as a Termin*Error).
+
+    Raises:
+        TerminScopeError: write-access check fails (write to a
+            confidentiality-scoped field without the scope).
+        TerminNotFoundError: record doesn't exist, or ownership
+            row_filter blocks the access.
+    """
+    cr = request.path_params.get("content", "")
+    key = request.path_params.get("key", "")
+    auth = request.auth
+    user_scopes = set(auth.scopes) if auth else set()
+
+    body = await request.json() or {}
+    schema = ctx.content_lookup.get(cr, {})
+
+    # ── Write-access check ──
+    from ..confidentiality import check_write_access
+    write_err = check_write_access(body, schema, user_scopes)
+    if write_err:
+        raise TerminScopeError(write_err)
+
+    # ── Resolve target record by lookup column ──
+    lookup_col = getattr(ctx, "lookup_column_for", lambda _cr: "id")(cr)
+    if lookup_col == "id":
+        existing = await ctx.storage.read(cr, key)
+        target_id = key
+    else:
+        page = await ctx.storage.query(
+            cr,
+            Eq(field=lookup_col, value=key),
+            QueryOptions(limit=1),
+        )
+        existing = dict(page.records[0]) if page.records else None
+        target_id = existing["id"] if existing else None
+
+    # ── Ownership row_filter ──
+    row_filter = getattr(ctx, "row_filter_for", lambda _cr: None)(cr)
+    if row_filter and row_filter.get("kind") == "ownership":
+        owner_field = row_filter.get("field")
+        owner_id = auth.principal.id if auth else ""
+        if existing and owner_field and existing.get(owner_field) != owner_id:
+            raise TerminNotFoundError("Not found")
+        # Strip ownership-field overwrites silently.
+        if owner_field in body:
+            body = {k: v for k, v in body.items() if k != owner_field}
+
+    # ── State-machine PUT gate ──
+    if existing and cr in ctx.sm_lookup:
+        from ..state import do_state_transition
+
+        sm_list = ctx.sm_lookup.get(cr, [])
+        state_cols = {sm["machine_name"] for sm in sm_list}
+        touched = [sm for sm in sm_list if sm["machine_name"] in body]
+        if touched:
+            user_dict = _user_dict_for_state_transition(auth)
+            for sm in touched:
+                col = sm["machine_name"]
+                new_val = body.get(col, "")
+                cur_val = existing.get(col, "")
+                if new_val != cur_val:
+                    await do_state_transition(
+                        ctx.storage, cr, existing["id"], col, new_val,
+                        user_dict, ctx.sm_lookup,
+                        ctx.terminator, ctx.event_bus,
+                    )
+        if state_cols:
+            body = {k: v for k, v in body.items() if k not in state_cols}
+
+    # ── Validate (merged view if updating) ──
+    if existing:
+        merged = dict(existing)
+        merged.update(body)
+        validate_dependent_values(cr, merged, ctx.content_lookup, ctx.expr_eval)
+    else:
+        validate_dependent_values(cr, body, ctx.content_lookup, ctx.expr_eval)
+
+    # ── Persist or read-back ──
+    if body and target_id is not None:
+        try:
+            record = await ctx.storage.update(cr, target_id, body)
+        except TerminRuntimeError:
+            raise
+        except Exception as e:
+            terminator_route = getattr(ctx, "route_terminator_validation", None)
+            if terminator_route is not None:
+                terminator_route(cr, e)
+            raise
+        if record is None:
+            raise TerminNotFoundError("Not found")
+        record = dict(record)
+        publish = getattr(ctx, "publish_content_event", None)
+        if publish is not None:
+            await publish("updated", cr, record)
+        run_event_handlers = getattr(ctx, "run_event_handlers_for_content", None)
+        if run_event_handlers is not None:
+            await run_event_handlers(cr, "updated", record)
+    else:
+        # Body was state-only and applied via transition, OR no
+        # record to update.
+        if target_id is None:
+            raise TerminNotFoundError("Not found")
+        record = await ctx.storage.read(cr, target_id)
+        if record is None:
+            raise TerminNotFoundError("Not found")
+
+    from ..confidentiality import redact_record
+    record = redact_record(record, schema, user_scopes)
+    return TerminResponse(json_body=record)
+
+
+async def delete_content_handler(
+    request: TerminRequest,
+    ctx: Any,
+) -> TerminResponse:
+    """Handle ``DELETE /api/v1/{content}/{key}`` — delete one record.
+
+    Adapter contract:
+        * ``request.path_params["content"]`` — content_ref
+        * ``request.path_params["key"]`` — lookup-column value
+        * ``request.auth`` — caller's AuthContext.
+
+    Cascade semantics: the route passes ``CascadeMode.RESTRICT`` as
+    the caller's *intent*. Actual cascade behavior comes from each
+    child's FK declaration in the schema (ON DELETE CASCADE vs
+    ON DELETE RESTRICT, emitted from the IR's
+    ``FieldSpec.cascade_mode``). The reference SQLite provider
+    treats RESTRICT as "if any FK violation, raise"; future
+    providers may consult the arg differently.
+
+    Raises:
+        TerminNotFoundError: record doesn't exist, or ownership
+            row_filter blocks the delete (404 by design — see
+            get_content_handler for rationale).
+        TerminConflictError: foreign-key violation (other records
+            reference this one).
+    """
+    from ..providers.storage_contract import CascadeMode
+
+    cr = request.path_params.get("content", "")
+    key = request.path_params.get("key", "")
+    auth = request.auth
+
+    # ── Resolve target id ──
+    lookup_col = getattr(ctx, "lookup_column_for", lambda _cr: "id")(cr)
+    target_id = key
+    if lookup_col != "id":
+        page = await ctx.storage.query(
+            cr,
+            Eq(field=lookup_col, value=key),
+            QueryOptions(limit=1),
+        )
+        if not page.records:
+            raise TerminNotFoundError("Record not found")
+        target_id = page.records[0].get("id")
+
+    # ── Ownership row_filter on DELETE ──
+    row_filter = getattr(ctx, "row_filter_for", lambda _cr: None)(cr)
+    if row_filter and row_filter.get("kind") == "ownership":
+        owner_field = row_filter.get("field")
+        owner_id = auth.principal.id if auth else ""
+        if owner_field:
+            rec = await ctx.storage.read(cr, target_id)
+            if rec is None or rec.get(owner_field) != owner_id:
+                raise TerminNotFoundError("Record not found")
+
+    # ── Delete ──
+    try:
+        deleted = await ctx.storage.delete(
+            cr, target_id, cascade_mode=CascadeMode.RESTRICT,
+        )
+    except TerminRuntimeError:
+        raise
+    except Exception as e:
+        msg = str(e)
+        # FK violation translates to 409 with a friendly message.
+        if "FOREIGN KEY" in msg.upper():
+            singular = cr[:-1] if cr.endswith("s") else cr
+            detail = (
+                f"Cannot delete this {singular}: other records "
+                f"reference it. Remove or reassign those first."
+            )
+            terminator_route = getattr(ctx, "route_terminator_validation", None)
+            if terminator_route is not None:
+                terminator_route(cr, e)
+            raise TerminConflictError(detail)
+        raise
+
+    if not deleted:
+        raise TerminNotFoundError("Record not found")
+
+    publish = getattr(ctx, "publish_content_event", None)
+    if publish is not None:
+        await publish("deleted", cr, {"id": target_id})
+
+    return TerminResponse(json_body={"deleted": True})
+
+
+__all__ = [
+    "list_content_handler",
+    "get_content_handler",
+    "create_content_handler",
+    "update_content_handler",
+    "delete_content_handler",
+]
