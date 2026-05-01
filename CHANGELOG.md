@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.9.1] — 2026-05-01
+
+A correctness + hygiene patch release on top of v0.9.0. No IR
+schema changes; no breaking surface changes. The contract Protocols,
+IR types, and routing-dispatch surface are byte-identical to v0.9.0
+plus the additions below.
+
+### Added
+
+- **`make_anonymous_principal(session_marker)`** factory in
+  `providers/identity_contract.py`. Anonymous is now a *type* with
+  a stable auditable id of the form `anonymous:<sanitized-marker>`
+  rather than an empty-string null. The runtime calls this at the
+  identity-resolution layer (in `termin-server`'s
+  `_resolve_principal_and_scopes`), deriving the session marker
+  from the `termin_user_name` cookie. Operators can filter audit
+  logs with `invoked_by_principal_id LIKE 'anonymous:%'` to find
+  anonymous-caller activity.
+- `Principal.is_anonymous` now recognizes both the canonical
+  sentinel id and the new typed `anonymous:<marker>` form.
+- `routing/compute.py::trigger_compute_handler` now reads
+  `request.auth.principal` and forwards it as the `invoked_by`
+  kwarg to `ctx.execute_compute(...)`. This was the load-bearing
+  fix that made manual-trigger CEL audit rows stamp the right
+  principal columns per BRD §6.3.4. The matching runtime change
+  lives in `termin-server`'s `compute_runner._execute_cel_compute`.
+
+### Changed
+
+- Renamed `queue-and-retry-forever` → `queue-and-retry` in the
+  `failure_mode` comment on `ChannelSpec` (`ir/types.py`) and the
+  `ChannelProvider` Protocol module docstring
+  (`providers/channel_contract.py`). The "forever" qualifier was
+  operationally wrong — the v0.10 retry-worker design caps retry
+  duration at a configurable max-retry-hours window (default
+  reasonable, 24h cap) and migrates payloads to a dead-letter
+  table on timeout. With a finite timeout "forever" stops being
+  accurate. Grammar acceptance unchanged in v0.9.x; full
+  implementation lands v0.10.
+
+### Fixed
+
+- `datetime.utcnow()` (deprecated in Python 3.12, removed in 3.13)
+  → `datetime.now(timezone.utc)` migration in `expression/cel.py`
+  and `validation/dependents.py`. Wire format preserved
+  byte-for-byte via `.replace("+00:00", "Z")` so audit columns,
+  CEL `now` bindings, and any external timestamp consumers see
+  identical strings.
+
+### Suite
+
+268 tests passing on Windows (was 261; +7 for the new
+`TestMakeAnonymousPrincipal` class in `test_provider_contracts.py`).
+
 ## [0.9.0] — 2026-04-30
 
 The opening release of `termin-core`. Phase 7 of the v0.9 milestone

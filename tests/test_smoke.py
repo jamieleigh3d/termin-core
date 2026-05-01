@@ -12,7 +12,7 @@ def test_termin_core_importable():
 
 def test_termin_core_version_string():
     import termin_core
-    assert termin_core.__version__ == "0.9.0"
+    assert termin_core.__version__ == "0.9.1"
 
 
 def test_no_fastapi_dependency():
