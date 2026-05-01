@@ -49,9 +49,15 @@ The conformance test suite lives in
 
 ## Status
 
-Pre-extraction work in progress. Slice 7.1 of Phase 7 — see
-[`docs/phase-7-termin-core-extraction-design.md`](https://github.com/jamieleigh3d/termin-compiler/blob/feature/v0.9/docs/phase-7-termin-core-extraction-design.md)
-in the compiler repo.
+**v0.9.0 — released 2026-04-30.** Phase 7 of the v0.9 milestone
+extracted this contract surface out of `termin-compiler/termin_runtime/`
+and `termin-compiler/termin/{ir,ir_serialize}.py` over slices 7.1
+through 7.5. The `termin-compiler/termin_runtime/` shim layer that
+carried tests through the transition was deleted in slice 7.5a;
+slice 7.5b dropped the legacy `User.PascalCase` CEL surface and the
+`legacy_user_dict` carrier in favor of the v0.9 `the user` shape.
+
+Suite at release: 285 tests passing on Windows, coverage 68%.
 
 ## License
 

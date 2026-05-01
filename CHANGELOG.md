@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased — v0.9 in progress (feature/v0.9)
+## [0.9.0] — 2026-04-30
+
+The opening release of `termin-core`. Phase 7 of the v0.9 milestone
+extracted the framework-free contract surface that any conforming
+Termin runtime imports — Provider Protocols, IR types, expression
+evaluation, confidentiality, errors, validation, state-machine
+rules, routing types, and 6 CRUD handlers — into this sibling
+package. `termin-server` is the reference framework adapter;
+alternate runtimes (an alternate Termin runtime, third-party
+language ports) can implement against `termin-core` directly
+without depending on FastAPI / SQLite / Anthropic / Jinja2.
+
+**Release-day suite:** 285 tests passing on Windows (261 unit/contract
++ 24 conformance pack additions), coverage 68% (from 36% pre-pack).
 
 ### Slice 7.1 — pure types and Protocols extracted (2026-04-30)
 
