@@ -59,14 +59,34 @@ class AuthContext:
         scopes: Tuple of scope names this principal has *for this
             request* — boundary-scoped, role-mapped, app-declared.
             Tuple (not set) so the value is hashable.
-        role_name: The role label the legacy runtime threaded through.
-            Empty string for principals not mapped to a named role.
-            Slice 7.5 considers whether this stays or drops.
+        roles: Tuple of role names assigned to this principal in this
+            app's identity block. v0.9 cookie-based runtime resolves a
+            single role and produces a 1-tuple; future identity
+            providers (Okta groups, OIDC claims, etc.) populate the
+            full assigned set. Source CEL reads via ``the user.roles``.
+        role_name: The legacy single-role label. Always equal to
+            ``roles[0] if roles else ""``. Kept for the audit-log
+            and error-message call sites that name a single role;
+            consider dropping in v1.0 once those call sites move to
+            ``roles``.
     """
 
     principal: "Principal"
     scopes: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
     role_name: str = ""
+
+    def __post_init__(self) -> None:
+        # Keep ``role_name`` in sync with ``roles[0]`` for the legacy
+        # call sites. Adapters that only know the legacy single-role
+        # spelling can keep passing ``role_name=...`` and roles
+        # auto-populates; conversely, callers that pass ``roles=(...)``
+        # get role_name backfilled. ``object.__setattr__`` is the
+        # frozen-dataclass-safe way to do this.
+        if self.roles and not self.role_name:
+            object.__setattr__(self, "role_name", self.roles[0])
+        elif self.role_name and not self.roles:
+            object.__setattr__(self, "roles", (self.role_name,))
 
     def has_scope(self, name: str) -> bool:
         """True if the named scope is in :attr:`scopes`. The
@@ -106,4 +126,45 @@ class AuthContext:
         return getattr(self.principal, "is_system", False)
 
 
-__all__ = ["AuthContext"]
+def build_the_user_for_cel(auth: "AuthContext | None") -> dict:
+    """Build the BRD #3 §4.2-shaped ``the user`` binding for CEL.
+
+    Slice 7.5b (2026-04-30): every CEL evaluator site that historically
+    bound a ``User`` PascalCase dict now binds a single ``the_user``
+    key whose value is this dict. Source CEL spells it as
+    ``the user.X`` or, after the optional-``the`` rewrite, plain
+    ``user.X`` — both resolve to ``the_user`` in the eval context.
+
+    Returns the same shape ``_build_the_user_object`` builds in
+    termin-server/identity.py, but without depending on the runtime's
+    Principal record (this lives in core; identity is a Protocol
+    surface). The two builders agree by construction — any field
+    added to one must be added to the other.
+
+    Anonymous fallback: when ``auth`` is None, returns a dict whose
+    ``is_anonymous`` is True so source CEL doesn't NPE when an
+    unauthenticated request lands.
+    """
+    if auth is None:
+        return {
+            "id": "anonymous",
+            "display_name": "",
+            "is_anonymous": True,
+            "is_system": False,
+            "scopes": [],
+            "roles": [],
+            "preferences": {},
+        }
+    p = auth.principal
+    return {
+        "id": p.id,
+        "display_name": p.display_name or "",
+        "is_anonymous": auth.is_anonymous,
+        "is_system": auth.is_system,
+        "scopes": list(auth.scopes),
+        "roles": list(auth.roles),
+        "preferences": dict(getattr(p, "preferences", {}) or {}),
+    }
+
+
+__all__ = ["AuthContext", "build_the_user_for_cel"]

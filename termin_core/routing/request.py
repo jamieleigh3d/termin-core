@@ -152,16 +152,11 @@ class TerminRequest:
     auth: Optional["AuthContext"] = None
     scheme: str = "http"
     client: Optional[tuple[str, int]] = None
-    # Slice 7.2.e transitional: the legacy
-    # ``ctx.get_current_user(request)`` dict the v0.9 runtime
-    # threaded through CEL evaluation. It carries the
-    # ``User.Username`` / ``User.Role`` etc. PascalCase shape that
-    # IR-declared default_expr / dependent_values expressions
-    # reference. Adapter middleware sets this so handlers calling
-    # ``evaluate_field_defaults`` keep working during the
-    # migration. Slice 7.5 deletes this field once the legacy
-    # CEL-resolved shape moves into AuthContext or is replaced.
-    legacy_user_dict: Optional[dict] = None
+    # Slice 7.5b (2026-04-30): the legacy ``legacy_user_dict``
+    # carrier dropped here. Source CEL no longer references the
+    # ``User`` PascalCase shape — ``User.X`` is a TERMIN-S014
+    # compile error. CEL handlers read ``request.auth`` directly
+    # and call ``build_the_user_for_cel(auth)`` for the binding.
 
     def __post_init__(self) -> None:
         # Normalize method to uppercase (adapters sometimes pass

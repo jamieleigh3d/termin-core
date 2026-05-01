@@ -195,19 +195,38 @@ class ExpressionEvaluator:
 
 # v0.9 Phase 6a.4: source uses `the user.X` per BRD #3 §4.2 but CEL
 # doesn't allow spaces in identifiers, so we rewrite `the user` →
-# `the_user` before compile. The CEL context binds `the_user` to the
-# BRD-shaped Principal record. Word-boundary regex prevents stomping
-# on identifiers that happen to contain "the user" as a substring
-# (e.g., a content named "weather user" — vanishingly unlikely but
-# the bound is cheap insurance).
+# `the_user` before compile.
+#
+# Slice 7.5b (2026-04-30): JL made the leading "the" optional.
+# `user.X` references at a word boundary (not part of an identifier
+# like `user_id` or `super_user`) also rewrite to `the_user.X`. Run
+# `the user` → `the_user` first; the underscore in the result is a
+# word character, so the bare-`user` pattern won't match again.
+#
+# The bound is intentionally narrow: only `user` *followed by a dot*
+# rewrites. Plain `user` as a value (e.g., a record column name in
+# CEL: `record.user`) is unaffected. CEL itself enforces that the
+# rewritten identifier (`the_user`) must be in the context — so a
+# compute that references `user.X` without an authenticated context
+# raises the same evaluation error it would for `the user.X`.
 import re as _re
 _THE_USER_PATTERN = _re.compile(r"\bthe user\b")
+# Negative lookbehind on ``the `` prevents stomping on a literal
+# ``_the user.id`` source where the leading underscore prevents the
+# first pattern from matching, but a naive ``\buser(?=\.)`` would
+# still catch ``user`` because the preceding space is a word
+# boundary. The lookbehind blocks any ``the<space>`` prefix.
+_BARE_USER_PATTERN = _re.compile(r"(?<!the )\buser(?=\.)")
 
 
 def _rewrite_the_user(expression: str) -> str:
-    if not isinstance(expression, str) or "the user" not in expression:
+    if not isinstance(expression, str):
         return expression
-    return _THE_USER_PATTERN.sub("the_user", expression)
+    if "the user" in expression:
+        expression = _THE_USER_PATTERN.sub("the_user", expression)
+    if "user." in expression:
+        expression = _BARE_USER_PATTERN.sub("the_user", expression)
+    return expression
 
 
 def _cel_to_python(value):

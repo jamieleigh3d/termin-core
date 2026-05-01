@@ -53,15 +53,11 @@ def _exc_name(exc: BaseException) -> str:
 
 def _scopes_from(request: TerminRequest) -> set[str]:
     """Collect the user's effective scopes from the request's
-    AuthContext, falling back to the legacy user_dict shape during
-    the slice 7.5 transition window. Both are tuples/lists; the set
-    flattens them for membership checks."""
-    if request.auth is not None:
-        return set(request.auth.scopes)
-    legacy = request.legacy_user_dict
-    if isinstance(legacy, dict):
-        return set(legacy.get("scopes", []) or [])
-    return set()
+    AuthContext. Slice 7.5b: legacy_user_dict fallback removed —
+    request.auth is the single source of truth."""
+    if request.auth is None:
+        return set()
+    return set(request.auth.scopes)
 
 
 def _parse_json_body(request: TerminRequest) -> dict:

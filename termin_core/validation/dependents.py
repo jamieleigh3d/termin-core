@@ -147,13 +147,25 @@ def validate_min_max_constraints(data: dict, schema: dict) -> None:
             )
 
 
-def evaluate_field_defaults(data: dict, schema: dict, expr_eval, user: dict) -> None:
-    """Evaluate ``default_expr`` for missing fields in-place. No
-    validation failures emerge from this function — failed
-    evaluation silently skips the default."""
+def evaluate_field_defaults(
+    data: dict, schema: dict, expr_eval, auth=None,
+) -> None:
+    """Evaluate ``default_expr`` for missing fields in-place.
+
+    Slice 7.5b (2026-04-30): the ``user`` dict parameter is replaced
+    by an ``auth: AuthContext`` reference. Source CEL refers to the
+    caller as ``the user.X`` or (post-rewrite) plain ``user.X`` —
+    both resolve to the ``the_user`` binding in the eval context.
+
+    The ``User`` PascalCase binding is gone; source that uses
+    ``User.X`` is now a compile-time error per analyzer.py
+    ``_check_legacy_user_pascalcase``. Failed evaluation silently
+    skips the default — same v0.8 contract.
+    """
     import datetime
+    from ..routing.auth import build_the_user_for_cel
     default_ctx = {
-        "User": user.get("User", {}),
+        "the_user": build_the_user_for_cel(auth),
         "now": datetime.datetime.utcnow().isoformat() + "Z",
         "today": datetime.date.today().isoformat(),
     }

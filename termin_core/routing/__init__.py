@@ -21,7 +21,7 @@ framework, on top of ASGI semantics but without an ASGI library
 dependency.
 """
 
-from .auth import AuthContext  # noqa: F401
+from .auth import AuthContext, build_the_user_for_cel  # noqa: F401
 from .request import TerminRequest, TerminResponse  # noqa: F401
 from .websocket import TerminWebSocket  # noqa: F401
 from .route_specs import (  # noqa: F401
@@ -52,6 +52,7 @@ from .channels import (  # noqa: F401
 
 __all__ = [
     "AuthContext",
+    "build_the_user_for_cel",
     "TerminRequest",
     "TerminResponse",
     "TerminWebSocket",

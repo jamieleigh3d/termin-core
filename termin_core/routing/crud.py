@@ -373,14 +373,10 @@ async def create_content_handler(
     schema = ctx.content_lookup.get(cr, {})
 
     # ── Defaults + validation (validation raises TerminValidationError) ──
-    # evaluate_field_defaults reads ``user["User"]`` for the
-    # PascalCase-keyed CEL shape (User.Username, User.Role, etc.)
-    # IR-declared default_expr expressions reference. The adapter
-    # middleware stamps the legacy user dict on request for this
-    # purpose during the slice-7.2.e migration; slice 7.5 ports
-    # the shape into AuthContext or rewrites the CEL surface.
-    user_dict_for_defaults = request.legacy_user_dict or {}
-    evaluate_field_defaults(body, schema, ctx.expr_eval, user_dict_for_defaults)
+    # Slice 7.5b: evaluate_field_defaults now reads from
+    # request.auth via build_the_user_for_cel(); the legacy
+    # user["User"] PascalCase binding is gone (compile error).
+    evaluate_field_defaults(body, schema, ctx.expr_eval, auth=request.auth)
     validate_enum_constraints(body, schema)
     validate_min_max_constraints(body, schema)
     validate_dependent_values(cr, body, ctx.content_lookup, ctx.expr_eval)
