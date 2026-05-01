@@ -21,7 +21,7 @@ System context variables (injected fresh per evaluation):
 """
 
 import math
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 import celpy
 from celpy import json_to_cel
@@ -153,7 +153,7 @@ SYSTEM_FUNCTIONS = {
 def _make_dynamic_context():
     """Build context variables that are evaluated fresh each call."""
     return {
-        "now": datetime.utcnow().isoformat() + "Z",
+        "now": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "today": date.today().isoformat(),
     }
 

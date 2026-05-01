@@ -166,7 +166,7 @@ def evaluate_field_defaults(
     from ..routing.auth import build_the_user_for_cel
     default_ctx = {
         "the_user": build_the_user_for_cel(auth),
-        "now": datetime.datetime.utcnow().isoformat() + "Z",
+        "now": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "today": datetime.date.today().isoformat(),
     }
     for field_def in schema.get("fields", []):
