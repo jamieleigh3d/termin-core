@@ -30,9 +30,11 @@ a ChannelAuditRecord; the runtime logs it.
 Behavioral requirements (BRD §6.4.5) the runtime enforces around providers:
 
   - **Failure mode default: log-and-drop.** Provider exceptions are caught by
-    the ChannelDispatcher; the app keeps running. `surface-as-error` and
-    `queue-and-retry-forever` are grammar placeholders in Phase 4 — always
-    log-and-drop at runtime in this release.
+    the ChannelDispatcher; the app keeps running. v0.9.1 also implements
+    `surface-as-error` — the dispatcher re-raises a ChannelError to the
+    caller when the provider's `send()` raises. `queue-and-retry` is a
+    grammar placeholder in v0.9.x; full implementation (exponential backoff
+    + dead-letter after configurable max-retry-hours, 24h cap) lands v0.10.
   - **Per-action authorization** enforced by ChannelDispatcher before
     calling the provider. Providers receive only authorized calls.
   - **Idempotency keys** are runtime-generated; providers may use them
