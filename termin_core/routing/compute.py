@@ -133,7 +133,15 @@ async def trigger_compute_handler(
     except RuntimeError:
         main_loop = None
 
-    await ctx.execute_compute(comp, record, content_name, main_loop=main_loop)
+    # v0.9.1: pass the upstream principal so the audit row stamps
+    # invoked_by_principal_id correctly (anonymous callers get a
+    # synthesized "anonymous:<id>" marker per BRD §6.3.4 audit
+    # trail requirements).
+    invoked_by = getattr(request.auth, "principal", None) if request.auth else None
+    await ctx.execute_compute(
+        comp, record, content_name, main_loop=main_loop,
+        invoked_by=invoked_by,
+    )
 
     return TerminResponse(
         status_code=200,

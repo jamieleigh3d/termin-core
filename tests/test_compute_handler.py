@@ -73,8 +73,11 @@ class _StubCtx:
         if terminator_routes is not None:
             self.terminator = _StubTerminator(terminator_routes)
 
-    async def execute_compute(self, comp, record, content_name, *, main_loop):
-        self.executions.append((comp, record, content_name, main_loop))
+    async def execute_compute(self, comp, record, content_name, *,
+                              main_loop, invoked_by=None):
+        # v0.9.1 added the invoked_by kwarg so write_audit_trace can
+        # stamp principal columns. The stub records it for assertions.
+        self.executions.append((comp, record, content_name, main_loop, invoked_by))
 
 
 class _StubTerminator:
@@ -270,7 +273,7 @@ class TestSuccessResponseShape:
             _request(body={"record": record, "content_name": "sessions"}),
             ctx,
         ))
-        comp, rec, cname, _ml = ctx.executions[0]
+        comp, rec, cname, _ml, _invoked_by = ctx.executions[0]
         assert comp["name"]["snake"] == "evaluator"
         assert rec == record
         assert cname == "sessions"

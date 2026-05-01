@@ -115,13 +115,22 @@ class Principal:
 
     @property
     def is_anonymous(self) -> bool:
-        """True iff this is the canonical Anonymous principal."""
-        return self.id == "anonymous"
+        """True iff this is an Anonymous principal — either the
+        canonical sentinel (id="anonymous") or a session-bearing
+        anonymous principal (id="anonymous:<marker>") produced by
+        ``make_anonymous_principal``. Both forms are auditable as
+        anonymous; operators filter audit logs with
+        ``invoked_by_principal_id LIKE 'anonymous%'``."""
+        return self.id == "anonymous" or self.id.startswith("anonymous:")
 
 
 # Sentinel used by the runtime to short-circuit provider calls when
 # no credentials are supplied. Per BRD §6.1, Anonymous bypasses the
-# provider entirely.
+# provider entirely. This is the "no session marker" form; for
+# requests where a session marker is available (e.g., the
+# `termin_user_name` cookie), use ``make_anonymous_principal`` to
+# produce a session-bearing variant whose audit trail is
+# distinguishable from other anonymous activity.
 ANONYMOUS_PRINCIPAL = Principal(
     id="anonymous",
     type="human",
@@ -129,6 +138,55 @@ ANONYMOUS_PRINCIPAL = Principal(
     claims={},
     on_behalf_of=None,
 )
+
+
+def make_anonymous_principal(session_marker: Optional[str] = None) -> Principal:
+    """Construct an anonymous Principal with an optional session
+    marker for audit-trail distinguishability.
+
+    Anonymous is a *type*, not a null. v0.9.1 wires this through
+    the core identity system so audit rows always carry a typed
+    ``invoked_by_principal_id`` even for requests without
+    credentials. The id format is ``anonymous:<marker>`` where
+    ``<marker>`` is the sanitized session_marker (alphanumeric +
+    ``._-`` only); without a marker, returns the canonical
+    ``ANONYMOUS_PRINCIPAL`` sentinel (id="anonymous").
+
+    The runtime calls this at authentication time (in
+    ``termin_server.identity._resolve_principal_and_scopes``) when
+    the resolved role is anonymous, deriving the session marker
+    from the ``termin_user_name`` cookie. Operators can filter
+    audit logs by ``invoked_by_principal_id LIKE 'anonymous:%'``
+    to find named-anonymous activity, or
+    ``invoked_by_principal_id LIKE 'anonymous%'`` to find all
+    anonymous activity.
+
+    Args:
+        session_marker: optional session-stable marker (cookie
+            name, request id hash, etc.). Sanitized to
+            ``[a-zA-Z0-9._-]`` and truncated to 64 chars; if
+            empty after sanitization, returns the canonical
+            sentinel.
+
+    Returns:
+        A frozen Principal with type="human", id either
+        "anonymous" (no marker) or "anonymous:<sanitized>".
+    """
+    if not session_marker:
+        return ANONYMOUS_PRINCIPAL
+    sanitized = "".join(
+        c for c in str(session_marker)
+        if c.isalnum() or c in "._-"
+    )[:64]
+    if not sanitized:
+        return ANONYMOUS_PRINCIPAL
+    return Principal(
+        id=f"anonymous:{sanitized}",
+        type="human",
+        display_name=str(session_marker)[:128] or "Anonymous",
+        claims={},
+        on_behalf_of=None,
+    )
 
 
 @runtime_checkable

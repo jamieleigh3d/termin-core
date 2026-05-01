@@ -38,6 +38,7 @@ from termin_core.providers.contracts import ContractRegistry, Category
 from termin_core.providers.identity_contract import (
     ANONYMOUS_PRINCIPAL,
     Principal,
+    make_anonymous_principal,
 )
 
 
@@ -73,6 +74,64 @@ class TestRedactedSentinel:
             pass
         with pytest.raises(TypeError):
             redacted_json_default(_Opaque())
+
+
+# ── Anonymous Principal synthesis (v0.9.1) ──
+
+
+class TestMakeAnonymousPrincipal:
+    """``make_anonymous_principal(session_marker)`` is the canonical
+    way to construct an anonymous Principal at the identity layer.
+    Without a marker it returns the canonical sentinel; with a
+    marker it returns a session-bearing variant whose audit-log
+    rows are distinguishable from other anonymous activity."""
+
+    def test_no_marker_returns_canonical_sentinel(self):
+        p = make_anonymous_principal()
+        assert p is ANONYMOUS_PRINCIPAL
+        assert p.id == "anonymous"
+        assert p.is_anonymous
+
+    def test_empty_string_marker_returns_canonical_sentinel(self):
+        # Empty / None / whitespace-only after sanitization should
+        # all collapse to the sentinel.
+        assert make_anonymous_principal("") is ANONYMOUS_PRINCIPAL
+        assert make_anonymous_principal(None) is ANONYMOUS_PRINCIPAL
+        assert make_anonymous_principal("@@@@") is ANONYMOUS_PRINCIPAL
+
+    def test_marker_produces_typed_id(self):
+        p = make_anonymous_principal("alice")
+        assert p.id == "anonymous:alice"
+        assert p.is_anonymous
+        assert p.type == "human"
+        assert p.display_name == "alice"
+
+    def test_marker_sanitization_strips_unsafe_chars(self):
+        # Spaces and special chars get stripped; alphanumeric +
+        # ._- are preserved.
+        p = make_anonymous_principal("alice@example.com / O'Brien")
+        # @, /, ', space stripped; alphanumeric + . preserved.
+        assert p.id == "anonymous:aliceexample.comOBrien"
+        assert p.is_anonymous
+
+    def test_marker_truncated_at_64_chars(self):
+        marker = "a" * 200
+        p = make_anonymous_principal(marker)
+        assert p.id.startswith("anonymous:")
+        assert len(p.id.split(":", 1)[1]) == 64
+
+    def test_is_anonymous_recognizes_both_forms(self):
+        assert ANONYMOUS_PRINCIPAL.is_anonymous
+        assert make_anonymous_principal("alice").is_anonymous
+        # A real authenticated principal is NOT anonymous.
+        real = Principal(id="okta:user-42", type="human", display_name="Alice")
+        assert not real.is_anonymous
+
+    def test_anonymous_principal_is_immutable(self):
+        # Frozen dataclass — can't mutate post-construction.
+        p = make_anonymous_principal("alice")
+        with pytest.raises(Exception):
+            p.id = "evil"  # type: ignore[misc]
 
 
 # ── PrincipalContext (rendering binding) ──
