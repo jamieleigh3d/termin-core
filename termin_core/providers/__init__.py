@@ -48,7 +48,8 @@ from .storage_contract import (
 )
 from .compute_contract import (
     DefaultCelComputeProvider, LlmComputeProvider, AiAgentComputeProvider,
-    CompletionResult, AgentResult, AgentContext, AuditableAction,
+    CompletionResult, AgentResult, AgentContext, ConversationContext,
+    AuditableAction,
     ToolSurface, AuditRecord, ToolCall, Cost,
     AgentEvent, TokenEmitted, ToolCalled, ToolResult, Completed, Failed,
     ToolNotDeclared, NotAuthorized,
@@ -70,7 +71,8 @@ __all__ = [
     "BackupFailedError", "MigrationValidationError", "ProviderInjectedFault",
     "UpdateResult",
     "DefaultCelComputeProvider", "LlmComputeProvider", "AiAgentComputeProvider",
-    "CompletionResult", "AgentResult", "AgentContext", "AuditableAction",
+    "CompletionResult", "AgentResult", "AgentContext", "ConversationContext",
+    "AuditableAction",
     "ToolSurface", "AuditRecord", "ToolCall", "Cost",
     "AgentEvent", "TokenEmitted", "ToolCalled", "ToolResult", "Completed",
     "Failed",

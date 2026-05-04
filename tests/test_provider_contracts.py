@@ -263,3 +263,71 @@ class TestNowIso:
         assert "T" in s
         # Either trailing Z or explicit offset.
         assert s.endswith("Z") or "+" in s[-6:] or "-" in s[-6:]
+
+
+# ── v0.9.2 L7.1: ConversationContext + AgentContext.conversation ──
+
+
+class TestConversationContext:
+    """ConversationContext carries pre-translated provider-native messages
+    plus the source-field/source-record_id pointers reviewers need for
+    audit. Per tech-design §11.1."""
+
+    def test_carries_messages_and_source_pointers(self):
+        from termin_core.providers.compute_contract import ConversationContext
+        ctx = ConversationContext(
+            messages=({"role": "user", "content": "hi"},),
+            source_field="chat_threads.conversation",
+            source_record_id="thread-42",
+        )
+        assert ctx.messages == ({"role": "user", "content": "hi"},)
+        assert ctx.source_field == "chat_threads.conversation"
+        assert ctx.source_record_id == "thread-42"
+
+    def test_messages_default_is_empty_tuple(self):
+        from termin_core.providers.compute_contract import ConversationContext
+        ctx = ConversationContext(
+            source_field="x.y", source_record_id="r-1",
+        )
+        assert ctx.messages == ()
+
+    def test_is_frozen(self):
+        from termin_core.providers.compute_contract import ConversationContext
+        ctx = ConversationContext(
+            source_field="x.y", source_record_id="r-1",
+        )
+        with pytest.raises(Exception):
+            ctx.source_field = "z.w"  # type: ignore[misc]
+
+
+class TestAgentContextConversation:
+    """AgentContext.conversation is optional: legacy non-conversation
+    agents leave it None and the provider falls back to the legacy
+    triggering-record prompt path. Per tech-design §11.1."""
+
+    def test_conversation_defaults_to_none(self):
+        from termin_core.providers.compute_contract import AgentContext
+        from termin_core.providers.identity_contract import (
+            make_anonymous_principal,
+        )
+        ac = AgentContext(principal=make_anonymous_principal())
+        assert ac.conversation is None
+
+    def test_conversation_can_be_supplied(self):
+        from termin_core.providers.compute_contract import (
+            AgentContext, ConversationContext,
+        )
+        from termin_core.providers.identity_contract import (
+            make_anonymous_principal,
+        )
+        conv = ConversationContext(
+            messages=({"role": "user", "content": "what time is it?"},),
+            source_field="sessions.history",
+            source_record_id="s-1",
+        )
+        ac = AgentContext(
+            principal=make_anonymous_principal(),
+            conversation=conv,
+        )
+        assert ac.conversation is conv
+        assert ac.conversation.messages[0]["content"] == "what time is it?"

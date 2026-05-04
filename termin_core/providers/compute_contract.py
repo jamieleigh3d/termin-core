@@ -274,6 +274,29 @@ ToolCallback = Callable[[str, Mapping[str, Any]], Any]
 
 
 @dataclass(frozen=True)
+class ConversationContext:
+    """Pre-translated, native-shape conversation passed to an ai-agent
+    provider. v0.9.2 §11.1.
+
+    The runtime materializes the source-level conversation field into
+    the provider's native message shape before invoking the provider —
+    Anthropic gets `[{role, content: [blocks]}]`, OpenAI gets the
+    chat-completions array, etc. Providers consume the messages
+    directly; the source-field/source-record_id pointers exist so
+    audit and reflection surfaces can trace back to the row.
+
+    `messages` is opaque to termin-core (the shape is provider-native);
+    the materializer that produces it lives in the provider package.
+    Providers that don't support conversation context ignore the
+    `AgentContext.conversation` field entirely; computes targeting
+    them must keep using the legacy triggering-record prompt path.
+    """
+    source_field: str = ""
+    source_record_id: str = ""
+    messages: tuple[Mapping[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
 class AgentContext:
     """Per-invocation context the ai-agent provider receives. BRD §6.3.3.
 
@@ -289,10 +312,16 @@ class AgentContext:
         through the gate. ToolNotDeclared / NotAuthorized are
         runtime-translated exceptions the provider can catch and
         propagate to the LLM.
+    conversation: pre-materialized conversation context for agents
+        whose source declares `Conversation is X.Y` (v0.9.2 §11.1).
+        ``None`` for legacy non-conversation agents — the provider
+        falls back to the triggering-record prompt path. Providers
+        that don't support conversation ignore the field.
     """
     principal: Principal
     bound_symbols: Mapping[str, Any] = field(default_factory=dict)
     tool_callback: Optional[ToolCallback] = None
+    conversation: Optional[ConversationContext] = None
 
 
 # ── Streaming events (BRD §6.3.3) ──
