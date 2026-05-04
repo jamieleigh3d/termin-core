@@ -211,6 +211,21 @@ class EventActionSpec:
     column_mapping: tuple[tuple[str, str], ...] = ()   # (target_col, source_col) pairs
     send_content: str = ""                               # content to send (for channel send actions)
     send_channel: str = ""                               # channel name (for channel send actions)
+    # v0.9.2 L8 (tech-design §13.2): When-rule action lists may include
+    # `Append to <content>.<field> as "<kind>" with body \`<expr>\``. The
+    # five `append_*` fields below are populated (and the create/send
+    # fields left empty) when a When-rule body produces an Append action.
+    # The runtime dispatches on `append_field` being non-empty.
+    append_content: str = ""              # resolved snake_case content the append targets
+    append_field: str = ""                # snake_case conversation field on that content
+    append_kind: str = ""                 # canonical kind: "user"|"assistant"|"tool_call"|"tool_result"|"system_event"
+    append_body_expr: str = ""            # CEL expression evaluated at firing time
+    # Tail metadata after the body: free-form `, source: \`X\`, parent_id: \`Y\``
+    # captured verbatim for the runtime to decompose. Each entry in
+    # this tuple is a (key, expr) pair — the key is the metadata field
+    # name (e.g., "source"), the expr is the CEL expression as written
+    # in source (with surrounding backticks already stripped).
+    append_metadata: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -221,6 +236,13 @@ class EventSpec:
     action: Optional[EventActionSpec] = None
     condition_expr: Optional[str] = None  # v2: CEL expression for trigger
     log_level: str = "INFO"               # v2: TRACE, DEBUG, INFO, WARN, ERROR
+    # v0.9.2 L8: When-rule bodies may declare a sequence of actions
+    # (per tech-design §13.2). When `actions` is non-empty, the runtime
+    # executes them in source order. The legacy `action` field stays
+    # populated with the first non-append EventActionSpec for callers
+    # that haven't migrated to the list form. New callers should walk
+    # `actions` only.
+    actions: tuple[EventActionSpec, ...] = ()
 
 
 # ── API Routes ──
