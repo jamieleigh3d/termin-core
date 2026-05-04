@@ -121,6 +121,7 @@ class Verb(Enum):
     UPDATE = "update"
     DELETE = "delete"
     AUDIT = "audit"
+    APPEND = "append"   # v0.9.2 L3: field-targeted append on conversation fields
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,9 @@ class AccessGrant:
     # so the runtime restricts the result set to rows the invoking
     # principal owns.
     their_own: bool = False
+    # v0.9.2 L3: when verbs contains APPEND, append_field names the
+    # conversation field this grant targets. None for non-APPEND grants.
+    append_field: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -236,6 +240,7 @@ class RouteKind(Enum):
     DELETE = auto()
     TRANSITION = auto()
     STREAM = auto()
+    APPEND = auto()  # v0.9.2 L3: POST /<resource>/{id}/<field>:append
 
 
 @dataclass(frozen=True)
@@ -259,6 +264,11 @@ class RouteSpec:
     # sees all rows the principal's scope grants. Populated when an
     # access rule uses `their own <content>`.
     row_filter: Optional[RowFilterSpec] = None
+    # v0.9.2 L3: target field name for APPEND routes. The lowering
+    # encodes the conversation field name in the path AND on the spec
+    # so the runtime handler can locate the JSON column to append to
+    # without re-parsing the path.
+    field_name: Optional[str] = None
 
 
 # ── Pages / UI ──
@@ -388,6 +398,14 @@ class ComputeSpec:
     objective_source: Optional[dict] = None
     trigger: Optional[str] = None                          # "schedule <interval>" or "event <name>"
     trigger_where: Optional[str] = None                    # CEL expression for trigger filtering
+    # v0.9.2 L6 (compiler tech design §10): wired conversation source for
+    # ai-agent computes. (content_snake_name, field_name) pair when present.
+    # The runtime materializes the conversation field at invocation time and
+    # auto-appends the assistant entry on response. Compiler analyzer enforces
+    # mutual exclusion with `accesses` of the same content (TERMIN-S057) and
+    # that `trigger` names the matching `<content>.<field>.appended` event
+    # (TERMIN-S058). Carried as a 2-tuple for canonical IR JSON shape.
+    conversation_source: Optional[tuple[str, str]] = None
     accesses: tuple[str, ...] = ()                         # content types this Compute can touch
     # v0.9 Phase 3 slice (c): full source-level access grant grammar.
     # Together with accesses, these populate the agent's ToolSurface
