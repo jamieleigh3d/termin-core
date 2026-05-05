@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "termin-core"
-version = "0.9.1"
+version = "0.9.2"
 description = "Termin core library — contract Protocols, IR types, and routing dispatch surface that any conforming Termin runtime imports from."
 readme = "README.md"
 requires-python = ">=3.10"

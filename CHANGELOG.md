@@ -1,5 +1,68 @@
 # Changelog
 
+## [0.9.2] — 2026-05-05
+
+The conversation-field IR additions release. Adds the IR types,
+contract Protocol additions, and routing dispatch surface for the
+v0.9.2 conversation-field work; the matching compiler/runtime
+surface lands in `termin-compiler`, `termin-server`, and
+`termin-conformance` v0.9.2.
+
+`ir_version` bumps **0.9.0 → 0.9.2** because IR shape changed
+additively (new base types, new verb, new routes, new compute
+source). Per the v0.9.2 patch policy in `termin-compiler/RELEASE_PROCESS.md`
+§2: additive IR fields are patches pre-v1.0.
+
+### Added
+
+- **`structured` and `conversation` base types** in
+  `ir/types.py::FieldSpec` validation. Opaque-JSON and typed-
+  message-log primitives that the runtime materializes per
+  provider — termin-core stays framework-free; the actual JSON
+  ↔ Anthropic translation lives in termin-server.
+- **`Verb.APPEND`** in `ir/types.py::Verb` enum. Fifth CRUD verb
+  alongside view/create/update/delete.
+- **`RouteSpec` for `POST <resource>/{id}/<field>:append`** in
+  `routing/dispatch.py`. New `RouteKind.APPEND` plus the
+  matching dispatch shape; runtimes implement the handler in
+  their hosting layer (the reference runtime in `termin-server`
+  does this through `routes.py::_do_append`).
+- **`Conversation` source on `ComputeSpec`** in `ir/types.py`.
+  Optional `conversation_source: Optional[tuple[str, str]]`
+  field — `(content_name, field_name)` — lowered from the
+  `Conversation is X.Y` source line. Read by the runtime at
+  agent-loop trigger time to know which conversation field to
+  read history from and write replies back to.
+- **When-rule action lists** in `ir/types.py::WhenRuleSpec`.
+  `actions: tuple[ActionSpec, ...]` (replacing the single-action
+  field; back-compat shim accepts the legacy single-action
+  form). Each action carries its own `verb` and CEL-expression
+  payload; runtimes dispatch each through the matching handler
+  family.
+- **`ActionSpec.append`** in `ir/types.py`. Append-action shape
+  carrying `target` (content + field), `payload_expr`
+  (CEL → entry envelope), and optional `parent_id_expr` for
+  threaded entries.
+- **`ConversationContext`** in `runtime_context.py`. Typed view
+  over a conversation-field's entries. Methods:
+  `materialize_for_agent()`, `append(kind, body, **opts)`,
+  `entries_since(entry_id)`. Runtime providers receive this via
+  `AgentContext.conversation` and use it to translate the
+  conversation history to whatever message shape their backing
+  agent expects.
+- **`AgentContext.conversation`** field — `Optional[ConversationContext]`,
+  populated by the runtime when the triggering compute declares
+  `Conversation is X.Y`.
+
+### Suite
+
+273 tests passing (was 268; +5 from the new IR types, verb
+membership, route shape, action-list lowering, and
+ConversationContext API). Contract Protocol shape unchanged for
+existing providers — the only Protocol additions are optional
+fields/methods, so v0.9.0 / v0.9.1 providers continue to work
+without modification.
+
 ## [0.9.1] — 2026-05-01
 
 A correctness + hygiene patch release on top of v0.9.0. No IR
