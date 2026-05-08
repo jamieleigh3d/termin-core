@@ -14,4 +14,4 @@ the sibling ``termin-server`` package; the compiler lives in
 ``termin-compiler``.
 """
 
-__version__ = "0.9.2"
+__version__ = "0.9.3"

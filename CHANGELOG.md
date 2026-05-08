@@ -1,5 +1,113 @@
 # Changelog
 
+## [0.9.3] — 2026-05-07
+
+The runtime extraction release. Internal API surface only — no IR
+change (`ir_version` stays at 0.9.2). Per `RELEASE_PROCESS.md` §2,
+this is a patch release: additive Python API, no removal of public
+surface. The cross-repo tech design lives at
+`termin-compiler/docs/termin-v0.9.3-runtime-extraction-tech-design.md`.
+
+This release widens `termin-core` so an alternate Termin runtime
+(AWS-native, third-party-Rust, anything else) can build on
+`termin-core>=0.9.3` alone, without inheriting FastAPI, aiosqlite,
+or Anthropic transitively from `termin-server`.
+
+### Added — Runtime infrastructure (top-level modules)
+
+- **`termin_core.events`** — `EventBus` for in-process pub/sub with
+  channel-prefix subscription filtering.
+- **`termin_core.scheduler`** — `Scheduler`,
+  `parse_schedule_interval` for periodic Compute execution.
+- **`termin_core.transaction`** — `Transaction`, `ContentSnapshot`,
+  `StagedWrite` for snapshot-isolation Compute write staging.
+- **`termin_core.reflection`** — `ReflectionEngine`,
+  `register_reflection_with_expr_eval`. Conformance asserts on
+  this output shape.
+
+### Added — Security + accessibility primitives
+
+- **`termin_core.boundaries`** — `build_boundary_maps`,
+  `check_boundary_access`, `check_boundary_identity`. Pure functions
+  over IR dicts.
+- **`termin_core.colorblind`** — CVD simulation + WCAG contrast
+  helpers (`simulate_cvd`, `contrast_ratio`, `relative_luminance`,
+  `cvd_distinguishable`, `hex_to_rgb`).
+- **`termin_core.presentation.markdown_sanitizer`** — the
+  BRD-mandated `sanitize_markdown` for the
+  `presentation-base.markdown` contract. Every conforming runtime
+  serving that contract uses this implementation to keep the wire
+  shape consistent.
+
+### Added — IR migrations
+
+- **`termin_core.migrations`** package with `classifier`,
+  `validate`, `introspect`, `ack`, `errors` submodules. Pure
+  framework-free migration logic; conformance imports from this
+  namespace and asserts on its behavior.
+
+### Added — Channel dispatch
+
+- **`termin_core.channels`** — `ChannelDispatcher` connects declared
+  Channels to external services with scope enforcement, type
+  validation, and delivery semantics.
+- **`termin_core.channel_config`** — deploy-config loader,
+  validator, and channel config dataclasses.
+- **`termin_core.channel_ws`** — outbound WebSocket connection
+  with auto-reconnect (optional `websockets` library; graceful
+  fallback when not installed).
+
+### Added — Page composition + client-side compute JS
+
+- **`termin_core.expression.compute_js.build_compute_js(ir)`** —
+  client-side Compute JS registration builder for SSR pages.
+- **`termin_core.presentation.compose.extract_page_reqs(page)`** —
+  component-tree walker that returns the data dependencies
+  (sources, form target, reference lists, unique-validation fields,
+  after-save hint) the runtime must satisfy before rendering. The
+  Jinja-bound `build_*template` functions stay in `termin-server`
+  (per the no-Jinja-in-core rule); they're not useful to alt
+  runtimes that ship their own templating engine.
+
+### Added — HTTP routing surface
+
+- **`termin_core.routing.append`** — v0.9.2's append CRUD verb
+  handler: `append_to_field(ctx, *, content_ref, key_val,
+  field_name, payload, user, row_filter)`,
+  `AppendValidationError`, `AppendNotFoundError`,
+  `CANONICAL_KINDS`. Uses `ctx.storage` (StorageProvider Protocol)
+  for storage access.
+- **`termin_core.routing.dispatch`** — `build_route_specs(ctx)`
+  walks the IR's pre-computed routes plus `ir.channels` and
+  returns `list[RouteSpec]`; `dispatch_http_request(ctx, request)`
+  is a convenience function that path-matches and dispatches to
+  the appropriate per-class handler. Adapters that prefer
+  per-route binding (FastAPI, Starlette) iterate the spec list;
+  adapters that prefer single-entry-point dispatch (raw ASGI) call
+  the convenience.
+
+### Added — Compute orchestration
+
+- **`termin_core.compute`** package with `materialize` submodule.
+  SDK-agnostic transformation helpers: `materialize_to_anthropic`
+  (canonical conversation-entry → Anthropic-shape messages array,
+  per v0.9.2 §11.4), `entry_role`, `build_content_blocks`,
+  `build_invokable_compute_tools`, `build_output_tool` (basic
+  scaffold), `build_agent_tools` (basic scaffold),
+  `truncate_purpose`, `purpose_property`, `add_purpose_to_tool`,
+  plus `CANONICAL_KINDS_USER_ROLE`,
+  `CANONICAL_KINDS_ASSISTANT_ROLE`, `PURPOSE_MAX_WORDS`,
+  `PURPOSE_TOOL_DESCRIPTION` constants and the
+  `ConversationMaterializationError` exception.
+- The provider Protocols themselves (`DefaultCelComputeProvider`,
+  `LlmComputeProvider`, `AiAgentComputeProvider`) live in
+  `termin_core.providers.compute_contract` (unchanged from
+  v0.9.0).
+
+### Test count
+
+- 273 passing.
+
 ## [0.9.2] — 2026-05-05
 
 The conversation-field IR additions release. Adds the IR types,

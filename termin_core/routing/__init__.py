@@ -49,6 +49,16 @@ from .channels import (  # noqa: F401
     invoke_channel_action_handler,
     webhook_receive_handler,
 )
+from .append import (  # noqa: F401
+    CANONICAL_KINDS,
+    AppendValidationError,
+    AppendNotFoundError,
+    append_to_field,
+)
+from .dispatch import (  # noqa: F401
+    build_route_specs,
+    dispatch_http_request,
+)
 
 __all__ = [
     "AuthContext",
@@ -73,4 +83,10 @@ __all__ = [
     "channel_send_handler",
     "invoke_channel_action_handler",
     "webhook_receive_handler",
+    "CANONICAL_KINDS",
+    "AppendValidationError",
+    "AppendNotFoundError",
+    "append_to_field",
+    "build_route_specs",
+    "dispatch_http_request",
 ]
