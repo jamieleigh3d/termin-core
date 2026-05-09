@@ -1,5 +1,40 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`append_to_field` is now storage-Protocol agnostic
+  (issue #5).** The v0.9.3 extraction kept the SQLite-shaped
+  ``json.dumps(entries)`` on write and ``json.loads(raw)`` on read
+  hardcoded into ``termin_core.routing.append.append_to_field``,
+  which blocked adoption by any storage provider that returns or
+  accepts native Python lists for list-typed columns (DynamoDB
+  Lists, Postgres JSONB, in-memory test doubles). The read path
+  now accepts native ``list``, ``None``/``""``, or a JSON-text
+  string; the write path passes a native ``list`` to
+  ``ctx.storage.update`` so each storage implementation owns its
+  own serialization. Resilience semantics are preserved (malformed
+  JSON / non-list JSON values still degrade to a fresh empty list
+  rather than raising).
+- 10 new unit tests in ``tests/test_append_handler.py`` pin the
+  read shapes (native list / JSON text / None / empty / malformed
+  / non-list) and assert that ``ctx.storage.update`` receives a
+  native list patch on write. Stale ``test_smoke.py`` version
+  assertion bumped to ``0.9.3`` (drive-by — the v0.9.3 release
+  forgot to bump it).
+
+### Compatibility
+
+- Backwards-compatible for all SQLite-backed deployments: the
+  reference runtime's storage provider continues to return JSON
+  text on read; the read path's existing decode branch handles it.
+  Pair-fix in ``termin-server`` v0.9.3-Unreleased adds a
+  ``_serialize_for_sqlite`` helper at the SQLite parameter-binding
+  boundary so native lists/dicts coming through
+  ``StorageProvider.update`` and ``.create`` are JSON-encoded on
+  the way in.
+
 ## [0.9.3] — 2026-05-07
 
 The runtime extraction release. Internal API surface only — no IR

@@ -147,17 +147,26 @@ async def append_to_field(
         if owner_field and record.get(owner_field) != user_id:
             raise AppendNotFoundError("Not found")
 
-    # Read existing entries (TEXT column holding a JSON array).
+    # Read existing entries. Storage providers may return the field
+    # as either a native Python list (DynamoDB, Postgres JSONB, any
+    # backend that natively persists list-typed columns) or as a
+    # JSON-text string (the SQLite reference runtime uses a TEXT
+    # column holding the JSON encoding). Issue #5: we must handle
+    # both shapes so this helper is genuinely storage-Protocol
+    # agnostic. Malformed / non-list values fall through to a fresh
+    # list, preserving pre-fix resilience semantics.
     raw = record.get(field_name)
-    if raw in (None, ""):
+    if isinstance(raw, list):
+        entries = list(raw)
+    elif raw in (None, ""):
         entries = []
     else:
         try:
-            entries = json.loads(raw)
-            if not isinstance(entries, list):
-                entries = []
+            decoded = json.loads(raw)
         except (TypeError, ValueError):
             entries = []
+        else:
+            entries = decoded if isinstance(decoded, list) else []
 
     # Build the new entry with canonical metadata.
     user_dict = user or {}
@@ -179,9 +188,15 @@ async def append_to_field(
             entry[k] = payload[k]
 
     entries.append(entry)
+    # Issue #5: pass the native Python list to ctx.storage.update.
+    # Each storage provider knows how to persist its types — SQLite
+    # wraps lists in json.dumps inside its update() implementation;
+    # DynamoDB stores the List natively; Postgres uses JSONB. The
+    # framework-free routing layer must not assume any particular
+    # serialization.
     updated_record = await ctx.storage.update(
         content_ref, key_val,
-        {field_name: json.dumps(entries)},
+        {field_name: entries},
     )
 
     # v0.9.2 L5: publish `content.<name>.<field>.appended`.
