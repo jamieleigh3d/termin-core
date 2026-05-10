@@ -63,7 +63,8 @@ def _principal_dict_for_event(user: dict) -> dict:
 async def do_state_transition(storage, table: str, record_id: int,
                               machine_name: str, target_state: str,
                               user: dict, state_machines: dict,
-                              terminator=None, event_bus=None):
+                              terminator=None, event_bus=None,
+                              expr_eval=None):
     """Attempt a state transition on a specific state machine.
 
     Args:
@@ -82,9 +83,31 @@ async def do_state_transition(storage, table: str, record_id: int,
         state_machines: dict of ``{table_name: list[sm_dict]}`` where
             each ``sm_dict`` has keys ``{machine_name, column,
             initial, transitions}``. The ``transitions`` value is a
-            dict of ``{(from_state, to_state): required_scope}``.
+            dict of ``{(from_state, to_state): gate}`` where ``gate``
+            is either:
+
+              * a plain scope string (legacy v0.9.3 shape — the
+                runtime treats the string as ``required_scope``); or
+              * a dict ``{required_scope: str, condition_expr:
+                Optional[str]}`` (v0.9.4 Gap #3 shape). When
+                ``condition_expr`` is set, the runtime evaluates it
+                against the record context via ``expr_eval`` and
+                refuses the transition when the result is falsy.
+                ``required_scope`` and ``condition_expr`` are
+                mutually exclusive in source — exactly one is set.
+
+            The dict shape is forward-compatible with the legacy
+            string shape via the ``_unpack_gate`` helper below.
+
         terminator: optional TerminAtor for error routing.
         event_bus: optional EventBus for publishing events.
+        expr_eval: optional CEL evaluator (typically
+            ``ctx.expr_eval``). Required only when at least one
+            transition in this machine has ``condition_expr`` set.
+            If a CEL transition is attempted without ``expr_eval``
+            available, the runtime fails closed with
+            ``TerminBadRequestError`` rather than allowing the
+            transition unguarded.
 
     Self-transitions (``from_state == to_state``) are valid when
     declared in the transition table — they write the same value
@@ -138,8 +161,84 @@ async def do_state_transition(storage, table: str, record_id: int,
             },
         )
 
-    required_scope = sm["transitions"][key]
-    if required_scope and required_scope not in user["scopes"]:
+    # v0.9.4 Gap #3: gate value is either a string (legacy scope-only
+    # shape) or a dict (current shape, carrying scope + condition_expr).
+    # The dict's `condition_expr` takes precedence — a transition
+    # author writes one or the other in source, never both.
+    gate = sm["transitions"][key]
+    if isinstance(gate, dict):
+        required_scope = gate.get("required_scope", "")
+        condition_expr = gate.get("condition_expr")
+    else:
+        required_scope = gate or ""
+        condition_expr = None
+
+    if condition_expr:
+        # CEL-condition transition. Evaluate the expression against a
+        # context that exposes the record under both its singular name
+        # (e.g. `session.hatch_unlocked`) AND a generic `record` alias
+        # so source authors can use either form. `the_user` is also
+        # exposed for transitions that gate on principal attributes.
+        if expr_eval is None:
+            # Fail closed: a misconfigured runtime that doesn't pass
+            # an evaluator must NOT silently allow the transition.
+            raise TerminBadRequestError(
+                f"Transition from '{current}' to '{target_state}' is "
+                f"CEL-conditioned (`{condition_expr}`) but no expression "
+                f"evaluator is available in this runtime context"
+            )
+        # Build the eval context. The singular alias mirrors the
+        # source-level `<singular>.field` form authors use.
+        singular = table[:-1] if table.endswith("s") else table
+        cel_ctx = {
+            singular: dict(record),
+            "record": dict(record),
+            "the_user": _principal_dict_for_event(user),
+            "now": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        try:
+            result = expr_eval.evaluate(condition_expr, cel_ctx)
+        except Exception as exc:
+            # CEL evaluation error — surface as bad-request so the
+            # caller (and any audit row) sees the broken expression.
+            if terminator:
+                terminator.route(TerminError(
+                    source=f"state:{table}:{machine_name}",
+                    kind="state",
+                    message=(
+                        f"Transition condition `{condition_expr}` failed "
+                        f"to evaluate: {type(exc).__name__}: {exc}"
+                    ),
+                    context=f"record_id={record_id}",
+                ))
+            raise TerminBadRequestError(
+                f"Transition condition `{condition_expr}` evaluation "
+                f"failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not result:
+            if terminator:
+                terminator.route(TerminError(
+                    source=f"state:{table}:{machine_name}",
+                    kind="state",
+                    message=(
+                        f"Transition condition `{condition_expr}` "
+                        f"evaluated to {result!r}; transition refused"
+                    ),
+                    context=f"record_id={record_id}",
+                ))
+            raise TerminConflictError(
+                f"Cannot transition from '{current}' to '{target_state}': "
+                f"condition `{condition_expr}` is not satisfied",
+                extra={
+                    "table": table,
+                    "machine_name": machine_name,
+                    "from_state": current,
+                    "to_state": target_state,
+                    "condition_expr": condition_expr,
+                    "evaluated_to": result,
+                },
+            )
+    elif required_scope and required_scope not in user["scopes"]:
         if terminator:
             terminator.route(TerminError(
                 source=f"state:{table}:{machine_name}",

@@ -2,6 +2,91 @@
 
 ## [Unreleased]
 
+### Added (v0.9.4 slice A3a — CEL-condition state transitions in the runtime state engine)
+
+- **`do_state_transition` now evaluates `condition_expr` at
+  transition time** when the matched transition's gate is the
+  v0.9.4 dict shape and `condition_expr` is set. The
+  CEL-condition transition's source form is `X can become Y if
+  `<cel-expression>``; the runtime evaluates the expression
+  against a context exposing the record under both its singular
+  alias (e.g. `session.field` matching the source-level
+  `<singular>.field` form) AND a generic `record` alias, plus
+  `the_user` (BRD #3 §4.2 principal dict) and `now` (ISO-8601
+  timestamp). The transition is refused when the result is
+  falsy (raises `TerminConflictError`).
+
+- **`TransitionSpec.condition_expr: Optional[str]`** added to
+  `termin_core/ir/types.py`. The compiler lowers the source
+  form into this field; the runtime state engine reads it via
+  the new dict-shape gate.
+
+- **Sm_lookup transition value shape extended** — the value at
+  `sm["transitions"][(from, to)]` is now either:
+  - the legacy bare scope string (still accepted —
+    forward-compatibility for any external runtime building
+    against v0.9.3-shaped state machines), OR
+  - a dict `{required_scope: str, condition_expr: Optional[str]}`
+    (the v0.9.4 shape). The state engine reads via
+    `isinstance(gate, dict)` and falls back to string
+    interpretation cleanly.
+
+- **`expr_eval` parameter** added to `do_state_transition`. Only
+  required when transitions in the table use `condition_expr`.
+  When a CEL transition is attempted without an evaluator, the
+  runtime fails closed with `TerminBadRequestError` rather than
+  allowing the transition unguarded — the security invariant
+  (every transition has an explicit, audit-visible gate) is
+  preserved across misconfiguration.
+
+- **CEL evaluator exception during evaluation** is converted to
+  `TerminBadRequestError` so the broken expression surfaces in
+  the audit row and the caller's error response, instead of
+  being silently allowed or silently denied.
+
+- **`tests/test_state_machine_cel_transitions.py`** — 8 new
+  tests covering:
+  - condition-true → transition succeeds, evaluator called once;
+  - condition-false → `TerminConflictError`, no update applied;
+  - missing evaluator with CEL transition → fail-closed
+    `TerminBadRequestError`;
+  - evaluator exception → `TerminBadRequestError`;
+  - legacy bare-scope string still works (forward-compat);
+  - dict-shape scope-only path equivalent to bare-scope;
+  - dict-shape scope check still enforces when caller lacks
+    the scope;
+  - CEL eval context exposes singular alias + record alias +
+    the_user + now.
+
+  Total termin-core tests: 310 → 318. All green.
+
+### Notes (v0.9.4 slice A3a — what this unblocks)
+
+- The compiler-side work (CEL grammar already existed; AST +
+  parse handler + analyzer in this slice) lands in the paired
+  termin-compiler commit. The server-side wiring
+  (`sm_lookup` shape change + `expr_eval` plumbing through the
+  two server-side `do_state_transition` callers) lands in the
+  paired termin-server commit.
+
+- This unblocks `examples-dev/airlock.termin` to express
+  lifecycle transitions in their natural form (e.g.
+  `scenario can become scoring if `session.hatch_unlocked``)
+  instead of the workaround of separate When-rules that watch
+  field changes and explicitly call `state.transition`. ARIA's
+  `repair_execute` correct-fix tool can simply set
+  `hatch_unlocked = true`; the runtime evaluates the lifecycle
+  condition and advances the state.
+
+- Auto-firing CEL transitions on field change (the v0.9.4
+  design doc §4.3 vision — "the runtime evaluates the
+  state-machine condition on each event tick") remain a v0.10
+  follow-up. The current "guarded CEL transition" form requires
+  an explicit `state.transition(...)` call but checks the
+  condition at that call time. That's enough for Airlock-on-
+  Termin's actual code paths since ARIA's tools always make
+  the explicit call after writing the gate fields.
+
 ### Added (v0.9.4 Path C — per-component contract dispatch in core)
 
 - **`termin_core.presentation.dispatch`** — framework-free

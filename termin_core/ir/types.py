@@ -184,6 +184,15 @@ class TransitionSpec:
     to_state: str
     required_scope: str
     feedback: tuple = ()        # tuple[TransitionFeedbackSpec, ...]
+    # v0.9.4 Gap #3: CEL-condition state transitions. When set, the
+    # runtime evaluates this CEL expression at state.transition(...)
+    # time and refuses the transition when the result is falsy.
+    # Mutually exclusive with `required_scope` — exactly one is set
+    # per transition. Source form:
+    #   <from> can become <to> if `<cel-expression>`
+    # See termin-compiler `parse_handlers.py` sm_transition_line
+    # handler and analyzer's transition-validation block.
+    condition_expr: Optional[str] = None
 
 
 @dataclass(frozen=True)
