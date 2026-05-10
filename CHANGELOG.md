@@ -2,6 +2,63 @@
 
 ## [Unreleased]
 
+### Added (v0.9.4 Path C — per-component contract dispatch in core)
+
+- **`termin_core.presentation.dispatch`** — framework-free
+  per-component contract dispatch. ``find_provider_for_contract``
+  looks up the provider bound to a qualified contract name in the
+  ``(contract, product, instance)`` triples a runtime keeps in
+  ``ctx.presentation_providers``. ``render_via_provider`` dispatches
+  to that provider — calling ``render_ssr`` for SSR-capable
+  providers and inlining the result, or emitting a CSR mount-point
+  ``<div>`` for CSR-only providers (the Airlock-on-Termin shape).
+  Provider exceptions are caught and rendered as visible markup so
+  failures show in the browser rather than silently corrupting the
+  page; missing render modes get a visible diagnostic.
+- **Mount-point HTML attribute constants exported from
+  ``dispatch``.** ``CSR_MOUNT_ATTR``, ``CSR_CONTRACT_ATTR``,
+  ``CSR_IR_ATTR``, ``CSR_HYDRATED_ATTR``. These are the wire shape
+  between the SSR pipeline and the JS hydrator (in
+  ``termin-server``'s bundled ``static/termin.js``); surfacing
+  them as named constants prevents drift between the producing
+  renderer and the consuming hydrator. Any conforming runtime
+  emitting CSR mount points must use the same names.
+- **`termin_core.presentation.provider_bindings`** —
+  ``build_presentation_provider_bindings`` resolves a deploy_config's
+  ``bindings.presentation`` / ``presentation.bindings`` map into
+  the ``(contract, product, instance)`` triples a runtime keeps
+  in ``ctx.presentation_providers``. Three namespace-expansion
+  paths: hardcoded ``presentation-base``, contract-package
+  registry, and (Path C addition) the bound provider's own
+  ``declared_contracts``. The third path makes a per-provider
+  package (Airlock) deployable with one binding line, no
+  contract-package YAML required.
+- **27 new unit tests** in ``tests/test_presentation_dispatch.py``
+  (18) and ``tests/test_presentation_provider_bindings.py`` (9).
+  Total termin-core tests: 283 → 310. All green.
+
+### Notes (v0.9.4 Path C — what this unblocks)
+
+- An alt runtime building on ``termin-core>=0.9.4`` inherits the
+  per-component dispatch + the namespace-binding resolver. v0.9.3's
+  narrative was *"alt runtime can build on termin-core>=0.9.3 alone
+  for the framework-free orchestration"*; this is the v0.9.4
+  presentation-side piece of the same arc. Pre-Path-C the dispatch
+  + binding logic lived only in ``termin-server`` — every alt
+  runtime would have had to reimplement it verbatim. Both pieces
+  are now in core; ``termin-server``'s ``render_component`` and
+  ``_populate_presentation_providers`` are thin wrappers that
+  delegate to the core helpers.
+
+- The mount-point HTML attribute constants are the runtime
+  contract between any SSR pipeline (emitting markup) and any JS
+  hydrator (consuming it). termin-server's bundled
+  ``static/termin.js`` duplicates them as string literals because
+  JS doesn't import Python; the JS comment points at the core
+  constants and asks future maintainers to keep the two in
+  lock-step. A future v0.10 build-time generator could derive the
+  JS constants from the Python source-of-truth.
+
 ### Fixed
 
 - **`append_to_field` is now storage-Protocol agnostic
