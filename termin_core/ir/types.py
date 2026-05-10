@@ -235,6 +235,17 @@ class EventActionSpec:
     # name (e.g., "source"), the expr is the CEL expression as written
     # in source (with surrounding backticks already stripped).
     append_metadata: tuple[tuple[str, str], ...] = ()
+    # v0.9.4 Gap #5: Update action verb for When-rule bodies. The
+    # update_content names the target content type (snake_case);
+    # update_assignments is a tuple of (column, cel_expression) pairs
+    # the runtime evaluates against the predicate context and applies
+    # via storage.update on the parent record (the same record the
+    # When-rule fired on, sourced from the event context). The runtime
+    # dispatches on update_content being non-empty. Surfaced by
+    # Airlock-on-Termin OVERSEER rules needing to flip
+    # session.overseer_X_fired flags to single-shot per session.
+    update_content: str = ""
+    update_assignments: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

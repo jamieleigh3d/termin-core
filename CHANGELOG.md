@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Added (v0.9.4 slice A3a — Update action verb in EventActionSpec)
+
+- **`EventActionSpec.update_content` and
+  `EventActionSpec.update_assignments`** added to the IR. Carries
+  the `Update <content>: <field> = `<cel-expression>`` action
+  shape from the v0.9.4 grammar addition (see termin-compiler
+  CHANGELOG). Mutually exclusive with the pre-existing
+  create / send / append discriminator fields per the existing
+  union pattern.
+
+  - **`update_content`**: snake_case content name the action
+    targets. The runtime executes the patch against the parent
+    record sourced from the event context (typically `record["id"]`,
+    same resolution path the Append action uses).
+  - **`update_assignments`**: tuple of `(column_name,
+    cel_expression)` pairs. The runtime evaluates each CEL
+    expression against the predicate context and applies the
+    patch via the StorageProvider's `update` method. The
+    column-name slot is snake_case after lowering; the CEL slot
+    is the raw expression text (backticks already stripped).
+
+  Surfaced by Airlock-on-Termin OVERSEER rules that need to
+  flip the `session.overseer_X_fired` flags to single-shot per
+  session. The IR addition is purely additive; legacy IR
+  consumers that don't recognize the field continue to ignore
+  it (the runtime dispatch loop checks for `update_content`
+  truthiness before reading `update_assignments`).
+
 ### Added (v0.9.4 slice A3a — CEL-condition state transitions in the runtime state engine)
 
 - **`do_state_transition` now evaluates `condition_expr` at
