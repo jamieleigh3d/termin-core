@@ -265,14 +265,45 @@ async def dispatch_http_request(ctx, request: TerminRequest) -> TerminResponse:
     """Convenience: route an incoming request to the right handler.
 
     Builds the route specs (cached on ctx after first call), matches
-    ``request.method`` + ``request.path`` against the route table, and
-    invokes the matched handler. Returns a 404 :class:`TerminResponse`
-    if no route matches; 405 if a path matches but the method doesn't.
+    ``request.method`` + ``request.path`` against the route table,
+    enforces per-route ``required_scope`` against ``request.auth``,
+    and invokes the matched handler.
 
-    This is the per-spec convenience the v0.9.3 issue #2 plan called
-    for. Adapters that need finer control should iterate
-    ``build_route_specs(ctx)`` directly and bind to their framework's
-    router.
+    Response codes:
+
+      * **404** — no route matches the path
+      * **405** — a route matches the path but not the method
+      * **403** — a route matches but the caller's auth doesn't carry
+        the route's ``required_scope`` (or the route has a
+        ``required_scope`` and the request has no ``auth`` at all)
+      * Whatever the handler returns otherwise
+
+    Status precedence is ``404 > 405 > 403 > handler`` — scope is
+    only checked once a route has matched on both path and method,
+    so an unauthenticated probe of a non-existent path returns 404,
+    not 403.
+
+    This is the two-layer security model in action: per-route
+    ``required_scope`` is Layer 1 (the dispatcher enforces it here);
+    per-content boundary identity is Layer 2 (the CRUD handlers
+    enforce it via ``ctx._check_boundary_identity``). See
+    ``termin-runtime-implementers-guide.md`` §3 for the model and
+    §6 for the dispatcher contract.
+
+    Adapters that bypass ``dispatch_http_request`` and iterate
+    ``build_route_specs(ctx)`` directly are responsible for
+    enforcing ``RouteSpec.required_scope`` themselves before calling
+    the handler. The pattern is::
+
+        for spec in build_route_specs(ctx):
+            adapter.add_route(
+                method=spec.method, path=spec.path,
+                handler=_with_scope_check(spec, ctx),
+            )
+
+    Closes (1) of issue #6 — the dispatcher used to silently bypass
+    ``required_scope``, leaving alt-runtime adopters without
+    per-route scope enforcement.
     """
     # Lazy build + cache.
     cache = getattr(ctx, "_route_specs_cache", None)
@@ -294,6 +325,24 @@ async def dispatch_http_request(ctx, request: TerminRequest) -> TerminResponse:
         if spec.method != method:
             method_mismatch = True
             continue
+
+        # Scope gate. Layer 1 of the two-layer security model:
+        # per-route scope check, run before any handler logic.
+        # Adapters routing through dispatch_http_request inherit
+        # the enforcement automatically.
+        if spec.required_scope is not None:
+            auth = getattr(request, "auth", None)
+            if auth is None or not auth.has_scope(spec.required_scope):
+                return TerminResponse(
+                    status_code=403,
+                    json_body={
+                        "detail": (
+                            f"Forbidden: route requires scope "
+                            f"{spec.required_scope!r}"
+                        ),
+                    },
+                )
+
         # Match found: inject path params and dispatch.
         new_pp = dict(request.path_params or {})
         new_pp.update(m.groupdict())

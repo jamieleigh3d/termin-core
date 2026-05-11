@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### Changed (issue #6 partial close — dispatcher now enforces per-route scope)
+
+- **`dispatch_http_request` enforces `RouteSpec.required_scope`
+  before invoking the handler.** When a matched RouteSpec has a
+  `required_scope` set and the request's `auth` is `None` or does
+  not carry the scope, the dispatcher returns 403 with a
+  recognizable `detail` body and never calls the handler.
+
+  Response-code precedence is now documented as
+  **404 > 405 > 403 > handler**: a request to a non-existent
+  path still returns 404 (the dispatcher must not leak the URL
+  space by 403-ing on misses); method mismatch on a matching path
+  returns 405; only after both gates pass does the dispatcher
+  check scope.
+
+  Adapters routing through `dispatch_http_request` inherit the
+  enforcement automatically. Adapters that iterate
+  `build_route_specs(ctx)` directly and bind each spec to their
+  framework's router are still responsible for enforcing scope
+  themselves — see the Implementer's Guide §3.5 for the wrapper
+  pattern.
+
+  Surfaced by an alt-runtime adopter (issue #6) who observed
+  that an adapter calling `dispatch_http_request` as a black box
+  was getting zero per-route scope enforcement. 12 new tests in
+  `tests/test_routing_dispatch_scope.py` covering no-scope,
+  scope-present, scope-missing, error-body shape, and 404/405
+  precedence over 403.
+
+  Closes (1) of issue #6. Items (2)–(4) are addressed by the
+  Implementer's Guide updates in `termin-conformance` v0.9.4-dev
+  (two-layer security model in §3.5, ctx wiring requirements in
+  §6.5, path conventions in §6.6). Items (4) route-matching
+  specifics and (5) response shape specifics remain open against
+  the alt-runtime adopter for concrete reproductions.
+
 ### Added (v0.9.4 slice A3a — Update action verb in EventActionSpec)
 
 - **`EventActionSpec.update_content` and
