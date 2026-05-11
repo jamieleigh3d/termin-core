@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+### Fixed (issue #6 (5) — redaction must mark scoped fields absent from records)
+
+- **`redact_record` now adds a redacted marker for each
+  confidentiality-scoped declared field that is absent from the
+  record**, in addition to redacting present fields. Without this,
+  adapters whose underlying storage omits unset keys (DynamoDB,
+  document stores) returned records lacking the confidential
+  key entirely — leaking the fact of absence to a caller who
+  could not see the value. The SQLite reference adapter
+  NULL-pads on read so the existing path worked for the
+  reference runtime, but the conformance test
+  (`TestFieldRedactionAPI::test_employee_role_salary_redacted`)
+  did `emp["salary"]["__redacted"]` and 404'd on adapters where
+  the field was absent.
+
+  After the fix, every declared confidentiality-scoped field
+  appears in the redacted output as a marker when the caller
+  lacks the required scope — independent of whether the
+  underlying storage returned the field. Privileged callers
+  see absent-as-absent (their view reflects storage truth).
+  Non-confidential fields absent from the record stay absent
+  regardless of caller scope.
+
+  Marker shape unchanged (Phase 5a.4 `{__redacted, field,
+  expected_type, scope, reason}`). Single source-of-truth
+  factored to `_make_redaction_marker` so the present-field and
+  absent-field paths build identical shapes.
+
+  11 new tests in `tests/test_redaction_absent_fields_v094.py`:
+  present-value redaction, present-None redaction, privileged
+  caller sees value, absent-scoped-field gets marker, marker
+  carries expected_type, marker carries scope, multiple absent
+  fields all marked, privileged caller sees absent-as-absent,
+  non-confidential absent stays absent, list-shaped wrapper
+  preserves invariants, content-level scope marks absent
+  field. Termin-core 330 → 341 tests passing.
+
+  Closes (5) of issue #6.
+
 ### Changed (issue #6 partial close — dispatcher now enforces per-route scope)
 
 - **`dispatch_http_request` enforces `RouteSpec.required_scope`

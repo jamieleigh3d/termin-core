@@ -45,20 +45,57 @@ def effective_scopes(field_ir: dict, content_ir: dict) -> set[str]:
     return scopes
 
 
+def _make_redaction_marker(field_name: str, field_ir: dict, missing_scope: str) -> dict:
+    """Build the v0.9 Phase 5a.4 marker shape for one field.
+
+    Single source of truth for marker construction — both the
+    "field present in record" and "field absent from record" paths
+    in :func:`redact_record` build markers via this helper so the
+    shape stays consistent.
+    """
+    return {
+        "__redacted": True,
+        "field": field_name,
+        "expected_type": field_ir.get("business_type", "text"),
+        "scope": missing_scope,
+        "reason": f"requires scope '{missing_scope}'",
+    }
+
+
 def redact_record(record: dict, content_ir: dict, caller_scopes: set[str]) -> dict:
     """Replace restricted field values with redaction markers.
 
-    System fields (id, status for state machines) pass through unless they
-    have explicit confidentiality scopes. Fields not in the schema also
-    pass through (e.g., auto-generated id).
+    System fields (id, status for state machines) pass through unless
+    they have explicit confidentiality scopes. Fields not in the
+    schema also pass through (e.g., auto-generated id).
 
-    v0.9 Phase 5a.4: marker shape extended to carry `field` and
-    `expected_type` per BRD #2 §7.6. The `scope` key is preserved for
-    back-compat with v0.8 consumers; new consumers should use the
-    expanded shape.
+    **Absent-field marking (v0.9.4, closes termin-core #6 (5)).** For
+    each declared field with a non-empty effective scope set, if the
+    caller lacks the required scopes AND the field is absent from
+    the record, the result carries a redacted marker for that field.
+    This closes a storage-shape side channel: adapters whose
+    underlying storage omits unset keys (DynamoDB, document stores)
+    used to return records WITHOUT the confidential key, leaking the
+    fact of absence to an unprivileged caller. After the fix every
+    declared confidential field appears in the redacted output as a
+    marker — the unprivileged caller cannot distinguish "no value"
+    from "value present but hidden."
+
+    Non-confidential fields absent from the record stay absent —
+    only the confidentiality-scoped surface gets padded-as-marker
+    behavior. Callers who hold the required scope see the field
+    unchanged (and an absent non-confidential field stays absent
+    for them too).
+
+    v0.9 Phase 5a.4: marker shape carries `field` and `expected_type`
+    per BRD #2 §7.6. The `scope` key is preserved for back-compat
+    with v0.8 consumers; new consumers should use the expanded
+    shape.
     """
     fields_by_name = {f["name"]: f for f in content_ir.get("fields", [])}
     result = {}
+    # Pass 1: fields present in the record — redact in place or pass
+    # through.
     for key, value in record.items():
         field_ir = fields_by_name.get(key)
         if field_ir is None:
@@ -68,16 +105,25 @@ def redact_record(record: dict, content_ir: dict, caller_scopes: set[str]) -> di
         required = effective_scopes(field_ir, content_ir)
         if required and not required.issubset(caller_scopes):
             missing = sorted(required - caller_scopes)
-            expected_type = field_ir.get("business_type", "text")
-            result[key] = {
-                "__redacted": True,
-                "field": key,
-                "expected_type": expected_type,
-                "scope": missing[0],
-                "reason": f"requires scope '{missing[0]}'",
-            }
+            result[key] = _make_redaction_marker(key, field_ir, missing[0])
         else:
             result[key] = value
+    # Pass 2: confidentiality-scoped fields ABSENT from the record —
+    # add a marker if the caller lacks the scope, so the storage's
+    # representation of "absent" doesn't leak through as a side
+    # channel. Skip when the caller has the scope (their privileged
+    # view should reflect storage truth — absent stays absent).
+    for field_ir in content_ir.get("fields", []):
+        name = field_ir["name"]
+        if name in record:
+            continue
+        required = effective_scopes(field_ir, content_ir)
+        if not required:
+            continue  # non-confidential — stay absent
+        if required.issubset(caller_scopes):
+            continue  # privileged caller — absence is truth
+        missing = sorted(required - caller_scopes)
+        result[name] = _make_redaction_marker(name, field_ir, missing[0])
     return result
 
 
