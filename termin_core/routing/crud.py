@@ -529,6 +529,7 @@ async def update_content_handler(
                         ctx.storage, cr, existing["id"], col, new_val,
                         user_dict, ctx.sm_lookup,
                         ctx.terminator, ctx.event_bus,
+                        expr_eval=getattr(ctx, "expr_eval", None),
                     )
         if state_cols:
             body = {k: v for k, v in body.items() if k not in state_cols}
@@ -720,6 +721,7 @@ async def transition_content_handler(
         ctx.storage, cr, row["id"], machine, target_state,
         user_dict, ctx.sm_lookup,
         ctx.terminator, ctx.event_bus,
+        expr_eval=getattr(ctx, "expr_eval", None),
     )
     return TerminResponse(json_body=record)
 

@@ -162,16 +162,22 @@ async def do_state_transition(storage, table: str, record_id: int,
         )
 
     # v0.9.4 Gap #3: gate value is either a string (legacy scope-only
-    # shape) or a dict (current shape, carrying scope + condition_expr).
-    # The dict's `condition_expr` takes precedence — a transition
-    # author writes one or the other in source, never both.
+    # shape) or a dict (current shape, carrying scope + condition_expr
+    # + entered_assignments). The dict's `condition_expr` takes
+    # precedence — a transition author writes one or the other in
+    # source, never both. v0.9.4 Gap #7: dict additionally carries
+    # `entered_assignments` — (field, cel_expression) pairs the
+    # runtime evaluates and patches atomically with the state-column
+    # update.
     gate = sm["transitions"][key]
     if isinstance(gate, dict):
         required_scope = gate.get("required_scope", "")
         condition_expr = gate.get("condition_expr")
+        entered_assignments = gate.get("entered_assignments") or ()
     else:
         required_scope = gate or ""
         condition_expr = None
+        entered_assignments = ()
 
     if condition_expr:
         # CEL-condition transition. Evaluate the expression against a
@@ -251,13 +257,57 @@ async def do_state_transition(storage, table: str, record_id: int,
             extra={"required_scope": required_scope},
         )
 
+    # v0.9.4 Gap #7: state-entered side-effect assignments. Evaluate
+    # each (field, cel_expression) pair against the record context
+    # and add to the patch so the field updates land atomically with
+    # the state-column update. The cel_ctx mirrors the
+    # condition_expr eval context so source authors can use the same
+    # `<singular>.field` aliases. CEL eval failures fail closed
+    # (refuse the transition) so a broken `entered:` expression
+    # doesn't silently drop the side-effect.
+    patch = {column: target_state}
+    if entered_assignments:
+        if expr_eval is None:
+            raise TerminBadRequestError(
+                f"Transition from '{current}' to '{target_state}' has "
+                f"entered: assignments but no expression evaluator is "
+                f"available in this runtime context"
+            )
+        singular = table[:-1] if table.endswith("s") else table
+        entered_ctx = {
+            singular: dict(record),
+            "record": dict(record),
+            "the_user": _principal_dict_for_event(user),
+            "now": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        for ea_field, ea_expr in entered_assignments:
+            try:
+                patch[ea_field] = expr_eval.evaluate(ea_expr, entered_ctx)
+            except Exception as exc:
+                if terminator:
+                    terminator.route(TerminError(
+                        source=f"state:{table}:{machine_name}",
+                        kind="state",
+                        message=(
+                            f"Transition entered: `{ea_field} = "
+                            f"{ea_expr}` failed to evaluate: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                        context=f"record_id={record_id}",
+                    ))
+                raise TerminBadRequestError(
+                    f"Transition entered: assignment `{ea_field} = "
+                    f"{ea_expr}` evaluation failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+
     # Atomic CAS: the update lands only if the column is still
     # `current` at write time. A racing transition from the same
     # source state will hit condition_failed.
     result = await storage.update_if(
         table, record_id,
         condition=Eq(field=column, value=current),
-        patch={column: target_state},
+        patch=patch,
     )
 
     if not result.applied:

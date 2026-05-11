@@ -193,6 +193,17 @@ class TransitionSpec:
     # See termin-compiler `parse_handlers.py` sm_transition_line
     # handler and analyzer's transition-validation block.
     condition_expr: Optional[str] = None
+    # v0.9.4 Gap #7: state-entered side-effect assignments. Each
+    # entry is a (field_name, cel_expression) pair. The runtime
+    # state engine evaluates each CEL expression against the
+    # record context at transition time and applies the patch
+    # atomically with the state-column update (single
+    # storage.update_if call). Source form: indented
+    # `entered: <field> = `<cel-expression>`` lines under the
+    # transition. Surfaced by Airlock-on-Termin slice A3b smoke
+    # — the natural way to set `scenario_started_at = now()` when
+    # lifecycle enters scenario.
+    entered_assignments: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
