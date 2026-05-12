@@ -37,13 +37,36 @@ def _cel_avg(items):
     vals = [float(x) for x in items]
     return DoubleType(sum(vals) / len(vals)) if vals else DoubleType(0)
 
-def _cel_min(items):
-    vals = [float(x) for x in items]
+def _cel_min(*items):
+    """Accepts either a single iterable (`min([a,b,c])`) or
+    multiple positional args (`min(a, b, c)`). Both shapes show up
+    in source — single-iterable for aggregations over a column,
+    positional for "min of these two specific values"."""
+    vals = _coerce_args_to_floats(items)
     return DoubleType(min(vals)) if vals else IntType(0)
 
-def _cel_max(items):
-    vals = [float(x) for x in items]
+def _cel_max(*items):
+    """v0.9.4: accepts either a single iterable (`max([a, b, c])`)
+    or multiple positional args (`max(a, b, c)`). The two-arg
+    call shape is what `Update the user's profile: best_score =
+    \\`max(profile.best_score, round.points)\\`` produces — the
+    natural reading of "max of these two" without an intermediate
+    list literal."""
+    vals = _coerce_args_to_floats(items)
     return DoubleType(max(vals)) if vals else IntType(0)
+
+
+def _coerce_args_to_floats(items):
+    """Helper for min/max: handle both single-iterable and
+    multi-positional call shapes. A single non-string iterable arg
+    is unpacked; otherwise items are taken as-is."""
+    if (
+        len(items) == 1
+        and hasattr(items[0], "__iter__")
+        and not isinstance(items[0], (str, StringType))
+    ):
+        return [float(x) for x in items[0]]
+    return [float(x) for x in items]
 
 def _cel_flatten(items):
     result = []
