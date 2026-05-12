@@ -257,12 +257,33 @@ class EventActionSpec:
     # session.overseer_X_fired flags to single-shot per session.
     update_content: str = ""
     update_assignments: tuple[tuple[str, str], ...] = ()
+    # v0.9.4 cross-content slice: target-resolution discriminator for
+    # the Update action.
+    #   ""               — same-record update (A3a behavior; target id
+    #                      is the event source record's id).
+    #   "source-record"  — explicit form of the same default; alt
+    #                      adapters that always read this field set it
+    #                      explicitly to avoid relying on the empty
+    #                      default.
+    #   "owner-keyed"    — target found by querying update_content for
+    #                      the row whose update_target_owner field
+    #                      equals the event's "user" principal id.
+    #                      Source form: `Update the user's <singular>:
+    #                      <field> = <cel>`. The compiler validates
+    #                      target ownership + uniqueness (TERMIN-A102 /
+    #                      A104) so the runtime can resolve a single
+    #                      target deterministically.
+    update_target_kind: str = ""
+    # v0.9.4: when update_target_kind == "owner-keyed", names the
+    # snake_case ownership field on the target content. Empty for
+    # source-record updates.
+    update_target_owner: str = ""
 
 
 @dataclass(frozen=True)
 class EventSpec:
     source_content: str                     # resolved snake_case
-    trigger: str                          # "created", "updated", "deleted", "expr"
+    trigger: str                          # "created", "updated", "deleted", "expr", "" for state-entered
     condition: Optional[EventConditionSpec] = None
     action: Optional[EventActionSpec] = None
     condition_expr: Optional[str] = None  # v2: CEL expression for trigger
@@ -274,6 +295,17 @@ class EventSpec:
     # that haven't migrated to the list form. New callers should walk
     # `actions` only.
     actions: tuple[EventActionSpec, ...] = ()
+    # v0.9.4 cross-content slice: state-machine entered-event trigger.
+    # When `trigger_state_field` is non-empty, the rule subscribes to
+    # the `<source_content>.<trigger_state_field>.<trigger_state_value>
+    # .entered` event class — the same channel computes already use
+    # via `Trigger on event "..."`. trigger / condition / condition_expr
+    # stay empty when this discriminator is set. Source form:
+    # `When <singular> <field> enters <state>:`. Lower converts the
+    # singular to source_content (plural snake_case) for runtime
+    # subscription.
+    trigger_state_field: str = ""
+    trigger_state_value: str = ""
 
 
 # ── API Routes ──
