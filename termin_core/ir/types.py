@@ -397,6 +397,13 @@ class PageEntry:
     role: str
     required_scope: Optional[str] = None
     children: tuple = ()   # tuple of ComponentNode
+    # v0.9.4 Phase 2: detail-page binding. When set to a non-empty
+    # snake_case plural content name, the runtime registers this
+    # page at `/<slug>/{id}` instead of `/<slug>` and fetches the
+    # one record from `<record_binding>` (ownership-scoped) before
+    # rendering child contracts. Empty string for regular (list-
+    # or-empty) pages — the runtime distinguishes by this field.
+    record_binding: str = ""
 
 
 
