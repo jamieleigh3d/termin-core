@@ -278,6 +278,15 @@ class EventActionSpec:
     # snake_case ownership field on the target content. Empty for
     # source-record updates.
     update_target_owner: str = ""
+    # v0.9.4 Phase 3 C1: Transition action verb. When transition_content
+    # is non-empty, the action is dispatched as a state-machine
+    # transition through the same path the HTTP /_transition/<plural>/
+    # <field>/{id}/<target> route uses. transition_field names the
+    # state-machine field (resolved at lower-time for the implicit-
+    # field source form). transition_target names the target state.
+    transition_content: str = ""
+    transition_field: str = ""
+    transition_target: str = ""
 
 
 @dataclass(frozen=True)
