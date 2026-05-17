@@ -292,7 +292,7 @@ class EventActionSpec:
 @dataclass(frozen=True)
 class EventSpec:
     source_content: str                     # resolved snake_case
-    trigger: str                          # "created", "updated", "deleted", "expr", "" for state-entered
+    trigger: str                          # "created", "updated", "deleted", "expr", "state-entered", "compute-invoked", ""
     condition: Optional[EventConditionSpec] = None
     action: Optional[EventActionSpec] = None
     condition_expr: Optional[str] = None  # v2: CEL expression for trigger
@@ -315,6 +315,14 @@ class EventSpec:
     # subscription.
     trigger_state_field: str = ""
     trigger_state_value: str = ""
+    # v0.9.4 Phase 3 C3: compute-invoked trigger. When trigger_compute
+    # is non-empty, the rule fires after the named compute completes
+    # successfully. trigger_compute_filter is the optional CEL filter
+    # (empty string = unfiltered, fires on every invocation). The
+    # event context has `args`, `result`, and the source-record's
+    # singular in CEL scope.
+    trigger_compute: str = ""
+    trigger_compute_filter: str = ""
 
 
 # ── API Routes ──
